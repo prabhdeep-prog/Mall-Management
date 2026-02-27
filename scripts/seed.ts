@@ -2,8 +2,8 @@ import * as dotenv from "dotenv"
 // Load env vars BEFORE any other imports
 dotenv.config({ path: ".env.local" })
 
-import { drizzle } from "drizzle-orm/neon-http"
-import { neon } from "@neondatabase/serverless"
+import { drizzle } from "drizzle-orm/postgres-js"
+import postgres from "postgres"
 import * as schema from "../src/lib/db/schema"
 import bcrypt from "bcryptjs"
 
@@ -21,8 +21,8 @@ const {
   posSalesData,
 } = schema
 
-const sql = neon(process.env.DATABASE_URL!)
-const db = drizzle(sql, { schema })
+const client = postgres(process.env.DATABASE_URL!)
+const db = drizzle(client, { schema })
 
 // ============================================================================
 // MOCK DATA GENERATOR (inline for seeding — same logic as lib/pos/mock-data-generator)

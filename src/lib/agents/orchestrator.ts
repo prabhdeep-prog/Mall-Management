@@ -12,9 +12,16 @@ import type {
   AgentType,
 } from "@/types/agents"
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
+// Only initialise the Anthropic client when a real key is present.
+// Without a key the SDK throws at construction time.
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+const isAnthropicConfigured =
+  !!ANTHROPIC_KEY && ANTHROPIC_KEY.startsWith("sk-ant-") && ANTHROPIC_KEY.length > 20
+
+let anthropic: Anthropic | null = null
+if (isAnthropicConfigured) {
+  anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY })
+}
 
 interface OrchestratorConfig {
   maxIterations: number
@@ -49,6 +56,25 @@ export class AgentOrchestrator {
 
     if (!agent) {
       throw new Error(`Agent ${agentType} not registered`)
+    }
+
+    // Return a mock decision when no Anthropic API key is configured (local dev)
+    if (!anthropic) {
+      const mockDecision: AgentDecision = {
+        id: crypto.randomUUID(),
+        agentId: agent.id,
+        action: "mock_response",
+        reasoning:
+          "AI agent is running in mock mode — no ANTHROPIC_API_KEY is configured. " +
+          "Set a real key in .env.local to enable live AI responses.",
+        confidence: 0.5,
+        requiresApproval: true,
+        data: { mock: true, agentType, trigger: context.triggerData },
+        alternatives: [],
+        metadata: { tokensUsed: 0, latencyMs: Date.now() - startTime },
+      }
+      await this.storeDecision(agent, mockDecision, context)
+      return mockDecision
     }
 
     const toolCalls: ToolCall[] = []
@@ -99,7 +125,7 @@ export class AgentOrchestrator {
     while (iterations < this.config.maxIterations) {
       iterations++
 
-      response = await anthropic.messages.create({
+      response = await anthropic!.messages.create({
         model: agent.model || this.config.defaultModel,
         max_tokens: agent.settings?.maxTokens || 4096,
         temperature: agent.settings?.temperature || 0.7,
