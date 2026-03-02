@@ -23,6 +23,7 @@ export interface POSProviderMeta {
   avgSetupTime: string
 }
 
+/** Database-stored connection config (before decryption) */
 export interface POSConnectionConfig {
   provider: POSProviderKey
   storeId: string
@@ -34,45 +35,56 @@ export interface POSConnectionConfig {
   additionalConfig?: Record<string, unknown>
 }
 
+/**
+ * Decrypted config passed to provider constructors.
+ * Maps from POSConnectionConfig after decrypting apiKey.
+ */
+export interface POSProviderConfig {
+  apiKey:         string
+  apiSecret?:     string
+  merchantId?:    string   // Pine Labs merchantId, POSist restaurantId, etc.
+  clientId?:      string   // POSist clientId
+  outletId?:      string   // Petpooja outletId
+  storeId?:       string   // Shopify storeId
+  locationId?:    string
+  webhookSecret?: string
+  extra?:         Record<string, unknown>
+}
+
 export interface POSSalesRecord {
-  date: string // ISO date string YYYY-MM-DD
-  grossSales: number
-  netSales: number
-  refunds: number
-  discounts: number
-  transactionCount: number
+  date:                Date
+  grossSales:          number
+  netSales:            number
+  refunds:             number
+  discounts:           number
+  transactionCount:    number
   avgTransactionValue: number
-  categoryBreakdown: Record<string, number> // category → amount
-  hourlyBreakdown: Record<string, number> // hour (0-23) → amount
+  categoryBreakdown:   Record<string, number>   // category → amount
+  hourlyBreakdown:     Record<number, number>   // hour (0-23) → amount
 }
 
 export interface POSConnectionTestResult {
-  success: boolean
-  message: string
-  storeName?: string
-  lastTransactionDate?: string
-  providerVersion?: string
+  ok:     boolean
+  error?: string
 }
 
+/**
+ * Constructor-based provider interface.
+ * Config is injected via the constructor — call getPOSProvider(key, config).
+ * Each method receives only the minimal parameters needed (date, range).
+ */
 export interface POSProvider {
-  readonly providerKey: POSProviderKey
-
   /** Test the connection without saving any data */
-  testConnection(config: POSConnectionConfig): Promise<POSConnectionTestResult>
+  testConnection(): Promise<POSConnectionTestResult>
 
   /** Fetch sales data for a specific date */
-  fetchDailySales(config: POSConnectionConfig, date: string): Promise<POSSalesRecord>
+  fetchDailySales(date: Date): Promise<POSSalesRecord>
 
   /** Fetch sales data for a date range */
-  fetchSalesRange(
-    config: POSConnectionConfig,
-    startDate: string,
-    endDate: string,
-    tenantCategory?: string
-  ): Promise<POSSalesRecord[]>
+  fetchSalesRange(startDate: Date, endDate: Date): Promise<POSSalesRecord[]>
 
-  /** Disconnect/revoke access */
-  disconnect(config: POSConnectionConfig): Promise<boolean>
+  /** Disconnect/revoke access (deregister webhooks, etc.) */
+  disconnect(): Promise<void>
 }
 
 // ============================================================================

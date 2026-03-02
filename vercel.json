@@ -2,6 +2,15 @@
   "framework": "nextjs",
   "buildCommand": "pnpm run build",
   "installCommand": "pnpm install",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/cron/process-dunning",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/pos-sync",
+      "schedule": "0 2 * * *"
+    }
+  ]
 }
-

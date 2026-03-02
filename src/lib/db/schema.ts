@@ -97,6 +97,10 @@ export const leases = pgTable("leases", {
   baseRent: decimal("base_rent", { precision: 12, scale: 2 }),
   revenueSharePercentage: decimal("revenue_share_percentage", { precision: 5, scale: 2 }),
   camCharges: decimal("cam_charges", { precision: 12, scale: 2 }),
+  // MG billing fields (added in migration 005)
+  monthlyMg: decimal("monthly_mg", { precision: 14, scale: 2 }).default("0").notNull(),
+  camCapPerSqft: decimal("cam_cap_per_sqft", { precision: 10, scale: 4 }),
+  revShareBreakpoint: decimal("rev_share_breakpoint", { precision: 14, scale: 2 }),
   securityDeposit: decimal("security_deposit", { precision: 12, scale: 2 }),
   lockInPeriodMonths: integer("lock_in_period_months"),
   noticePeriodMonths: integer("notice_period_months"),
