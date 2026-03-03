@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # Type-check + Lint + Build
+  # ──────────────────────────────────────────────────────────────
+  build:
+    name: Type-check, Lint & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+        env:
+          # Required at build time so Next.js doesn't fail on missing env vars.
+          # These are non-secret placeholders — real secrets only reach production.
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_db"
+          AUTH_SECRET: "ci-placeholder-secret-32-chars-min"
+          NEXTAUTH_URL: "http://localhost:3000"
+          ANTHROPIC_API_KEY: "sk-placeholder"
+          RESEND_API_KEY: "re_placeholder"
+          UPSTASH_REDIS_REST_URL: "https://placeholder.upstash.io"
+          UPSTASH_REDIS_REST_TOKEN: "placeholder"
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  # ──────────────────────────────────────────────────────────────
+  # Docker image build check (not pushed — just validates the
+  # Dockerfile succeeds end-to-end)
+  # ──────────────────────────────────────────────────────────────
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only run on pushes to main / develop (skip on every PR to save minutes)
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: mall-management:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_APP_URL=http://localhost:3000

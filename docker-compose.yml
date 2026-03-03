@@ -1,0 +1,86 @@
+# Local development stack
+# Replaces Neon (managed Postgres) and Upstash (managed Redis) with
+# local Docker-hosted equivalents so you can develop offline.
+#
+# Usage:
+#   docker compose up -d              # Start services
+#   docker compose up app             # Start everything including the app
+#   docker compose down -v            # Tear down and wipe volumes
+
+services:
+  # ──────────────────────────────────────────────────────────────
+  # PostgreSQL  (mirrors Neon's Postgres 16)
+  # ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mall
+      POSTGRES_PASSWORD: mall_secret
+      POSTGRES_DB: mall_management
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Run RLS migration on first boot
+      - ./scripts/migrations/001_enable_rls.sql:/docker-entrypoint-initdb.d/001_enable_rls.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mall -d mall_management"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────────
+  # Redis  (mirrors Upstash Redis)
+  # ──────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────
+  # Next.js application
+  # ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Overrides the Neon URL with the local Postgres service
+      DATABASE_URL: "postgresql://mall:mall_secret@postgres:5432/mall_management"
+      # Overrides the Upstash URL with the local Redis service
+      # (set UPSTASH_REDIS_REST_URL / TOKEN in .env.local for Upstash;
+      #  for local dev the app falls back gracefully when Redis is unavailable)
+      REDIS_URL: "redis://redis:6379"
+      AUTH_SECRET: "${AUTH_SECRET}"
+      NEXTAUTH_URL: "http://localhost:3000"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      RESEND_API_KEY: "${RESEND_API_KEY}"
+      NODE_ENV: "production"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  redis_data:

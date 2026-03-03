@@ -1,39 +1,49 @@
 // ============================================================================
 // POS Provider Factory
 // ============================================================================
-// Returns the correct POS provider adapter based on provider key.
-// Uses mock provider for demo; real providers for production.
+// Returns the correct POS provider adapter based on provider key + decrypted config.
+// In demo mode (POS_USE_MOCK=true), all providers use the mock adapter.
 
-import type { POSProvider, POSProviderKey, POSProviderMeta } from "./types"
+import type { POSProvider, POSProviderKey, POSProviderMeta, POSProviderConfig } from "./types"
 import { POS_PROVIDERS, INDIAN_PROVIDERS, GLOBAL_PROVIDERS } from "./types"
 import { MockPOSProvider } from "./providers/mock"
 import { ShopifyPOSProvider } from "./providers/shopify"
+import { PineLabsProvider } from "./providers/pine-labs"
+import { PetpoojaProvider } from "./providers/petpooja"
+import { POSistProvider } from "./providers/posist"
+import { RazorpayPOSProvider } from "./providers/razorpay-pos"
 
 // In demo mode, all providers use the mock adapter
 const USE_MOCK = process.env.POS_USE_MOCK !== "false" // Default: true (mock mode)
 
 /**
- * Get a POS provider adapter instance
- * In demo/dev mode, returns mock provider. In production, returns real adapter.
+ * Get a POS provider adapter instance with the given decrypted config.
+ * In demo/dev mode, returns mock provider regardless of key.
  */
-export function getPOSProvider(providerKey: POSProviderKey): POSProvider {
+export function getPOSProvider(
+  providerKey: POSProviderKey,
+  config: POSProviderConfig,
+): POSProvider {
   if (USE_MOCK) {
     return new MockPOSProvider()
   }
 
   switch (providerKey) {
-    case "shopify":
-      return new ShopifyPOSProvider()
-    // Other real providers will be added here as they are built
     case "pine_labs":
+      return new PineLabsProvider(config)
     case "razorpay_pos":
+      return new RazorpayPOSProvider(config)
     case "petpooja":
+      return new PetpoojaProvider(config)
     case "posist":
+      return new POSistProvider(config)
+    case "shopify":
+      return new ShopifyPOSProvider(config)
+    // Square, Lightspeed, Vend — fall back to mock until implemented
     case "square":
     case "lightspeed":
     case "vend":
     default:
-      // Fall back to mock for providers not yet implemented
       return new MockPOSProvider()
   }
 }
@@ -63,4 +73,12 @@ export function isDemoMode(): boolean {
 }
 
 export { POS_PROVIDERS, INDIAN_PROVIDERS, GLOBAL_PROVIDERS } from "./types"
-export type { POSProvider, POSProviderKey, POSProviderMeta, POSConnectionConfig, POSSalesRecord } from "./types"
+export type {
+  POSProvider,
+  POSProviderKey,
+  POSProviderMeta,
+  POSConnectionConfig,
+  POSProviderConfig,
+  POSSalesRecord,
+  POSConnectionTestResult,
+} from "./types"
