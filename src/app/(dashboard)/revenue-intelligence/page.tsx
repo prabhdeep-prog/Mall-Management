@@ -13,6 +13,19 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useTheme } from "next-themes"
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -129,6 +142,19 @@ const fmtCmpct = (n: number) => fmtCompact.format(n)
 const fmtPct  = (n: number | null) =>
   n == null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(1)}%`
 
+const TENANT_PALETTE = [
+  "#10b981", "#6366f1", "#f97316", "#ec4899",
+  "#3b82f6", "#a855f7", "#eab308", "#14b8a6",
+]
+
+const ZONE_COLORS: Record<string, string> = {
+  "Ground Floor":     "#6366f1",
+  "First Floor":      "#10b981",
+  "Second Floor":     "#f97316",
+  "Entertainment Zone": "#ec4899",
+}
+const ZONE_FALLBACK = ["#6366f1", "#10b981", "#f97316", "#ec4899", "#3b82f6"]
+
 // ── Preset ranges ─────────────────────────────────────────────────────────────
 
 function thisMonth() {
@@ -238,6 +264,17 @@ export default function RevenueIntelligencePage() {
   const [data,    setData]    = React.useState<PageData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error,   setError]   = React.useState<string | null>(null)
+
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === "dark"
+  const gridColor = isDark ? "hsl(217 32% 17%)" : "hsl(214 32% 91%)"
+  const tickColor = isDark ? "#94a3b8" : "#64748b"
+  const tooltipStyle: React.CSSProperties = {
+    backgroundColor: isDark ? "hsl(222 84% 5%)" : "hsl(0 0% 100%)",
+    border: `1px solid ${isDark ? "hsl(217 32% 17%)" : "hsl(214 32% 91%)"}`,
+    borderRadius: "8px",
+    fontSize: "12px",
+  }
 
   const fetchData = React.useCallback(async () => {
     setLoading(true); setError(null)
@@ -434,6 +471,60 @@ export default function RevenueIntelligencePage() {
         </div>
       )}
 
+      {/* ── Revenue Trend AreaChart ─────────────────────────────────────────── */}
+      {(data?.heatmap?.length ?? 0) > 1 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Revenue Trend</CardTitle>
+            <p className="text-xs text-muted-foreground">Daily gross sales · {data!.heatmap!.length} days</p>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={data!.heatmap} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="riGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#10b981" stopOpacity={isDark ? 0.3 : 0.2} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(d) => {
+                    const date = new Date(d)
+                    return `${date.getDate()}/${date.getMonth() + 1}`
+                  }}
+                  tick={{ fill: tickColor, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tickFormatter={(v) => fmtCmpct(v)}
+                  tick={{ fill: tickColor, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={60}
+                />
+                <Tooltip
+                  formatter={(value: number) => [fmtCmpct(value), "Gross Sales"]}
+                  labelFormatter={(d) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                  contentStyle={tooltipStyle}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="sales"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  fill="url(#riGradient)"
+                  dot={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Tabs ───────────────────────────────────────────────────────────── */}
       <Tabs defaultValue="tenants">
         <TabsList>
@@ -468,6 +559,56 @@ export default function RevenueIntelligencePage() {
 
         {/* Tenant leaderboard */}
         <TabsContent value="tenants" className="mt-4">
+          {/* Tenant Rankings BarChart */}
+          {(data?.byTenant?.length ?? 0) > 0 && (() => {
+            const topTenants = [...(data!.byTenant)]
+              .sort((a, b) => b.grossSales - a.grossSales)
+              .slice(0, 8)
+            return (
+              <Card className="mb-4">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Top Tenants by Revenue</CardTitle>
+                  <p className="text-xs text-muted-foreground">Gross sales · top {topTenants.length}</p>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={topTenants.length * 36 + 20}>
+                    <BarChart
+                      data={topTenants}
+                      layout="vertical"
+                      margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
+                    >
+                      <CartesianGrid horizontal={false} stroke={gridColor} />
+                      <XAxis
+                        type="number"
+                        tickFormatter={(v) => fmtCmpct(v)}
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="shopName"
+                        width={130}
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        formatter={(value: number) => [fmtCmpct(value), "Gross Sales"]}
+                        contentStyle={tooltipStyle}
+                      />
+                      <Bar dataKey="grossSales" radius={[0, 4, 4, 0]}>
+                        {topTenants.map((_, i) => (
+                          <Cell key={i} fill={TENANT_PALETTE[i % TENANT_PALETTE.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            )
+          })()}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
@@ -554,6 +695,51 @@ export default function RevenueIntelligencePage() {
 
         {/* Zone breakdown */}
         <TabsContent value="zones" className="mt-4">
+          {/* Zone Sales BarChart */}
+          {(data?.byZone?.length ?? 0) > 0 && (
+            <Card className="mb-4">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Zone Revenue Comparison</CardTitle>
+                <p className="text-xs text-muted-foreground">Gross sales by zone</p>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart
+                    data={data!.byZone}
+                    margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                    <XAxis
+                      dataKey="zone"
+                      tick={{ fill: tickColor, fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => fmtCmpct(v)}
+                      tick={{ fill: tickColor, fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={60}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [fmtCmpct(value), "Gross Sales"]}
+                      contentStyle={tooltipStyle}
+                    />
+                    <Bar dataKey="grossSales" radius={[4, 4, 0, 0]}>
+                      {data!.byZone.map((z, i) => (
+                        <Cell
+                          key={i}
+                          fill={ZONE_COLORS[z.zone] ?? ZONE_FALLBACK[i % ZONE_FALLBACK.length]}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Zone & Floor Performance</CardTitle>

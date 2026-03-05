@@ -28,6 +28,7 @@ import {
 } from "lucide-react"
 import { cn, formatCurrency } from "@/lib/utils"
 import { usePropertyStore } from "@/stores/property-store"
+import { useTheme } from "next-themes"
 import {
   Area,
   AreaChart,
@@ -155,6 +156,16 @@ export default function AnalyticsPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [data, setData] = React.useState<AnalyticsData | null>(null)
   const { selectedProperty } = usePropertyStore()
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === "dark"
+  const gridColor = isDark ? "hsl(217 32% 17%)" : "hsl(214 32% 91%)"
+  const tickColor = isDark ? "#94a3b8" : "#64748b"
+  const tooltipStyle = {
+    backgroundColor: isDark ? "hsl(222 84% 5%)" : "hsl(0 0% 100%)",
+    border: `1px solid ${isDark ? "hsl(217 32% 17%)" : "hsl(214 32% 91%)"}`,
+    borderRadius: "8px",
+    fontSize: "12px",
+  }
 
   const fetchData = React.useCallback(async () => {
     setIsLoading(true)
@@ -318,26 +329,31 @@ export default function AnalyticsPage() {
                     <AreaChart data={data.revenue.dailyChart}>
                       <defs>
                         <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={isDark ? 0.3 : 0.2} />
                           <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
                       <XAxis
                         dataKey="date"
                         tickFormatter={(d) => {
                           const date = new Date(d)
                           return `${date.getDate()}/${date.getMonth() + 1}`
                         }}
-                        className="text-xs"
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
                       />
                       <YAxis
                         tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
-                        className="text-xs"
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
                       />
                       <Tooltip
                         formatter={(value: number) => [formatCurrency(value), "Revenue"]}
                         labelFormatter={(d) => new Date(d).toLocaleDateString()}
+                        contentStyle={tooltipStyle}
                       />
                       <Area
                         type="monotone"
@@ -367,19 +383,26 @@ export default function AnalyticsPage() {
                 {data && data.revenue.dailyChart.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={data.revenue.dailyChart}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
                       <XAxis
                         dataKey="date"
                         tickFormatter={(d) => {
                           const date = new Date(d)
                           return `${date.getDate()}/${date.getMonth() + 1}`
                         }}
-                        className="text-xs"
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
                       />
-                      <YAxis className="text-xs" />
+                      <YAxis
+                        tick={{ fill: tickColor, fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
                       <Tooltip
                         formatter={(value: number) => [value, "Transactions"]}
                         labelFormatter={(d) => new Date(d).toLocaleDateString()}
+                        contentStyle={tooltipStyle}
                       />
                       <Bar dataKey="transactions" fill="#6366f1" radius={[4, 4, 0, 0]} />
                     </BarChart>
@@ -506,7 +529,7 @@ export default function AnalyticsPage() {
                       <span className="text-sm text-muted-foreground">Occupancy Rate</span>
                       <span className="text-lg font-bold">{data.leases.occupancyRate}%</span>
                     </div>
-                    <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-muted">
                       <div
                         className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all"
                         style={{ width: `${data.leases.occupancyRate}%` }}

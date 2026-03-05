@@ -167,7 +167,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "relative flex flex-col border-r bg-white dark:bg-gray-950 transition-all duration-300",
+        "relative flex flex-col border-r bg-background transition-all duration-300",
         collapsed ? "w-16" : "w-64"
       )}
     >
@@ -258,7 +258,7 @@ export function Sidebar() {
       <Button
         variant="ghost"
         size="icon"
-        className="absolute -right-3 top-20 h-6 w-6 rounded-full border bg-white shadow-sm hover:bg-gray-50"
+        className="absolute -right-3 top-20 h-6 w-6 rounded-full border bg-background shadow-sm hover:bg-muted"
         onClick={() => setCollapsed(!collapsed)}
       >
         {collapsed ? (

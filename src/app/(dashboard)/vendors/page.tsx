@@ -601,10 +601,10 @@ export default function VendorsPage() {
       </div>
 
       {/* Top Performers */}
-      <Card className="border-green-200 bg-green-50/30">
+      <Card className="border-green-200 bg-green-50/30 dark:border-green-900 dark:bg-green-950/20">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Award className="h-5 w-5 text-green-600" />
+            <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
             <CardTitle className="text-base">Top Performing Vendors</CardTitle>
           </div>
         </CardHeader>
@@ -615,7 +615,7 @@ export default function VendorsPage() {
               .sort((a, b) => b.performanceRating - a.performanceRating)
               .slice(0, 3)
               .map((vendor, idx) => (
-                <div key={vendor.id} className="flex items-start gap-3 p-3 bg-white rounded-lg border">
+                <div key={vendor.id} className="flex items-start gap-3 p-3 bg-card rounded-lg border">
                   <div
                     className={`flex items-center justify-center w-8 h-8 rounded-full text-white font-bold ${
                       idx === 0 ? "bg-yellow-500" : idx === 1 ? "bg-gray-400" : "bg-orange-400"
