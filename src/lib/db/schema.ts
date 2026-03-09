@@ -310,7 +310,10 @@ export const vendors = pgTable("vendors", {
   metadata: jsonb("metadata").default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-})
+}, (table) => ({
+  typeIdx:   index("idx_vendors_type").on(table.type),
+  statusIdx: index("idx_vendors_status").on(table.status),
+}))
 
 // ============================================================================
 // COMMUNICATION & INTERACTIONS

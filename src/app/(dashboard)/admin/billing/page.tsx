@@ -324,7 +324,7 @@ export default function AdminBillingPage() {
         </CardHeader>
         <CardContent>
           {data.failedPayments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No failed payments. 🎉</p>
+            <p className="text-sm text-muted-foreground">No failed payments.</p>
           ) : (
             <Table>
               <TableHeader>

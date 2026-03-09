@@ -17,6 +17,18 @@ const loginSchema = z.object({
   password: z.string().min(6),
 })
 
+/**
+ * Dev-mode bypass guard
+ * REQUIRES explicit DEV_AUTH_BYPASS=true in .env.local — never set in CI/prod.
+ */
+export function isDevBypassEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_AUTH_BYPASS === "true" &&
+    process.env.CI !== "true" // never bypass in CI
+  )
+}
+
 export const authConfig: NextAuthConfig = {
   providers: [
     Credentials({
@@ -76,6 +88,22 @@ export const authConfig: NextAuthConfig = {
       return session
     },
     authorized({ auth, request: { nextUrl } }) {
+      // ── Dev-mode bypass ──────────────────────────────────────────────────
+      if (isDevBypassEnabled()) {
+        const isPublicPath = nextUrl.pathname === "/" ||
+          nextUrl.pathname.startsWith("/api/auth") ||
+          nextUrl.pathname.startsWith("/api/health") ||
+          nextUrl.pathname.startsWith("/pos-simulator") ||
+          nextUrl.pathname.startsWith("/api/pos/simulator") ||
+          nextUrl.pathname.startsWith("/_next") ||
+          nextUrl.pathname === "/favicon.ico"
+
+        if (!isPublicPath) {
+          console.warn(`[DEV] Auth bypass enabled — allowing access to ${nextUrl.pathname}`)
+        }
+        return true
+      }
+
       const isLoggedIn = !!auth?.user
       const isOnAuth = nextUrl.pathname.startsWith("/auth")
       const isPublicPath = nextUrl.pathname === "/" ||

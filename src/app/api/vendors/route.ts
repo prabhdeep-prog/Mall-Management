@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { vendors } from "@/lib/db/schema"
-import { eq, and } from "drizzle-orm"
+import { eq, and, sql } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
 import { z } from "zod"
 
@@ -30,30 +29,39 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error }, { status: 403 })
   }
 
-  const session = await auth()
-  const organizationId_fallback = session?.user?.organizationId
-
   try {
     const { searchParams } = new URL(request.url)
-    const organizationId = searchParams.get("organizationId") || organizationId_fallback
-    const category = searchParams.get("category")
+    const type   = searchParams.get("type")
     const status = searchParams.get("status")
-    const type = searchParams.get("type")
+    const page   = Math.max(1, parseInt(searchParams.get("page")  || "1",  10))
+    const limit  = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)))
+    const offset = (page - 1) * limit
 
-    const allVendors = await db.query.vendors.findMany({
-      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    // Push filters to DB
+    const conditions = []
+    if (type)   conditions.push(eq(vendors.type, type))
+    if (status) conditions.push(eq(vendors.status, status))
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    const [items, [{ total }]] = await Promise.all([
+      db.query.vendors.findMany({
+        where,
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+        limit,
+        offset,
+      }),
+      db
+        .select({ total: sql<number>`count(*)::integer` })
+        .from(vendors)
+        .where(where),
+    ])
+
+    return NextResponse.json({
+      success: true,
+      data: items,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })
-
-    // Filter on application level
-    let filtered = allVendors
-    if (type) {
-      filtered = filtered.filter(v => v.type === type)
-    }
-    if (status) {
-      filtered = filtered.filter(v => v.status === status)
-    }
-
-    return NextResponse.json({ success: true, data: filtered })
   } catch (error) {
     console.error("Error fetching vendors:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

@@ -9,17 +9,9 @@ import { eq } from "drizzle-orm"
 // Re-export client-safe constants for backward compatibility in server components
 export { PERMISSIONS, ROLE_PERMISSIONS, type Permission } from "./permissions"
 import { PERMISSIONS, ROLE_PERMISSIONS, Permission } from "./permissions"
+import { isDevBypassEnabled } from "./config"
+export { isDevBypassEnabled } from "./config"
 
-// ── Dev-mode bypass guard ─────────────────────────────────────────────────────
-// REQUIRES explicit DEV_AUTH_BYPASS=true in .env.local — never set in CI/prod.
-// Guards against the env var leaking into staging/production Docker images.
-function isDevBypassEnabled(): boolean {
-  return (
-    process.env.NODE_ENV === "development" &&
-    process.env.DEV_AUTH_BYPASS === "true" &&
-    process.env.CI !== "true" // never bypass in CI
-  )
-}
 
 // Get permissions for a role (from DB or defaults)
 export async function getRolePermissions(roleName: string): Promise<Permission[]> {
@@ -76,6 +68,10 @@ export async function hasAnyPermission(permissions: Permission[]): Promise<boole
   const session = await auth()
 
   if (!session?.user) {
+    if (isDevBypassEnabled()) {
+      console.warn(`[DEV] No session — bypassing hasAnyPermission check: ${permissions.join(", ")}`)
+      return true
+    }
     return false
   }
 
@@ -90,6 +86,10 @@ export async function hasAllPermissions(permissions: Permission[]): Promise<bool
   const session = await auth()
 
   if (!session?.user) {
+    if (isDevBypassEnabled()) {
+      console.warn(`[DEV] No session — bypassing hasAllPermissions check: ${permissions.join(", ")}`)
+      return true
+    }
     return false
   }
 
@@ -133,6 +133,10 @@ export async function getCurrentUserPermissions(): Promise<Permission[]> {
   const session = await auth()
 
   if (!session?.user) {
+    if (isDevBypassEnabled()) {
+      console.warn(`[DEV] No session — returning ALL permissions for bypass`)
+      return Object.values(PERMISSIONS)
+    }
     return []
   }
 
@@ -148,6 +152,10 @@ export async function canAccessResource(
   const session = await auth()
 
   if (!session?.user) {
+    if (isDevBypassEnabled()) {
+      console.warn(`[DEV] No session — bypassing canAccessResource check: ${resourceType}`)
+      return true
+    }
     return false
   }
 

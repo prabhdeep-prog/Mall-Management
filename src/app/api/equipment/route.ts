@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { equipment } from "@/lib/db/schema"
-import { eq, and } from "drizzle-orm"
+import { eq, and, sql } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
 import { z } from "zod"
 
@@ -27,26 +27,38 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get("propertyId")
-    const type = searchParams.get("type")
-    const status = searchParams.get("status")
+    const type       = searchParams.get("type")
+    const status     = searchParams.get("status")
+    const page       = Math.max(1, parseInt(searchParams.get("page")  || "1",  10))
+    const limit      = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)))
+    const offset     = (page - 1) * limit
 
-    const allEquipment = await db.query.equipment.findMany({
-      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    // Build conditions in SQL — no more app-level filtering
+    const conditions = []
+    if (propertyId) conditions.push(eq(equipment.propertyId, propertyId))
+    if (type)       conditions.push(eq(equipment.type, type))
+    if (status)     conditions.push(eq(equipment.status, status))
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    const [items, [{ total }]] = await Promise.all([
+      db.query.equipment.findMany({
+        where,
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+        limit,
+        offset,
+      }),
+      db
+        .select({ total: sql<number>`count(*)::integer` })
+        .from(equipment)
+        .where(where),
+    ])
+
+    return NextResponse.json({
+      success: true,
+      data: items,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })
-
-    // Filter on application level
-    let filtered = allEquipment
-    if (propertyId) {
-      filtered = filtered.filter(e => e.propertyId === propertyId)
-    }
-    if (type) {
-      filtered = filtered.filter(e => e.type === type)
-    }
-    if (status) {
-      filtered = filtered.filter(e => e.status === status)
-    }
-
-    return NextResponse.json({ success: true, data: filtered })
   } catch (error) {
     console.error("Error fetching equipment:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

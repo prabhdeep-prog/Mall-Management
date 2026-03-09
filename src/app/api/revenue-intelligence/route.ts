@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { computeMallKPIs, getDailyHeatmap } from "@/lib/revenue/kpi-engine"
+import { getCachedOrFetch, CACHE_TTL } from "@/lib/cache"
 
 // ── Allowed roles ─────────────────────────────────────────────────────────────
 
@@ -75,9 +76,21 @@ export async function GET(req: NextRequest) {
 
   // ── Compute KPIs ────────────────────────────────────────────────────────────
   try {
+    // Cache KPI results — expensive aggregation queries, 30-minute TTL
+    const cacheKey = `revenue:kpi:${organizationId}:${startDate}:${endDate}:${view}:${heatmap}`
     const [summary, heatmapData] = await Promise.all([
-      computeMallKPIs(organizationId, { startDate, endDate }),
-      heatmap ? getDailyHeatmap(organizationId, startDate, endDate) : Promise.resolve(undefined),
+      getCachedOrFetch(
+        `revenue:kpi:${organizationId}:${startDate}:${endDate}`,
+        () => computeMallKPIs(organizationId, { startDate, endDate }),
+        CACHE_TTL.LONG, // 1 hour — historical data doesn't change
+      ),
+      heatmap
+        ? getCachedOrFetch(
+            `revenue:heatmap:${organizationId}:${startDate}:${endDate}`,
+            () => getDailyHeatmap(organizationId, startDate, endDate),
+            CACHE_TTL.LONG,
+          )
+        : Promise.resolve(undefined),
     ])
 
     // Shape response based on view mode

@@ -40,11 +40,23 @@ const loginSchema = z.object({
 // Looks up role name from the roles table
 async function getRoleName(roleId: string | null): Promise<UserRole> {
   if (!roleId) return "viewer"
-  const result = await serviceDb.execute<{ name: string }>(
+  const result = await serviceDb.execute<{ name: string; [key: string]: unknown }>(
     sql`SELECT name FROM roles WHERE id = ${roleId}::uuid LIMIT 1`
   )
-  const name = result.rows[0]?.name as UserRole | undefined
+  const name = result[0]?.name as UserRole | undefined
   return name ?? "viewer"
+}
+
+/**
+ * Dev-mode bypass guard
+ * REQUIRES explicit DEV_AUTH_BYPASS=true in .env.local — never set in CI/prod.
+ */
+export function isDevBypassEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_AUTH_BYPASS === "true" &&
+    process.env.CI !== "true" // never bypass in CI
+  )
 }
 
 export const authConfig: NextAuthConfig = {
@@ -61,20 +73,62 @@ export const authConfig: NextAuthConfig = {
 
         const { email, password } = parsed.data
 
-        // ── SECURITY DEFINER function — no org context needed ─────────────
-        // This is the ONLY place we query the users table without RLS.
-        // find_user_for_auth() runs as superuser internally but returns
-        // only the minimum fields required for authentication.
-        const result = await serviceDb.execute<{
+        // ── User lookup ───────────────────────────────────────────────────
+        // Primary: call the SECURITY DEFINER function (set up by migration 002).
+        // Fallback: direct table query when the function doesn't exist yet
+        //           (e.g. dev environment without full RLS migrations applied).
+        interface AuthRow {
           id: string
           email: string
           password_hash: string
           organization_id: string
           role_id: string | null
           status: string
-        }>(sql`SELECT * FROM find_user_for_auth(${email})`)
+          [key: string]: unknown  // satisfies Record<string, unknown> constraint
+        }
+        let user: AuthRow | undefined
 
-        const user = result.rows[0]
+        try {
+          const result = await serviceDb.execute<AuthRow>(
+            sql`SELECT * FROM find_user_for_auth(${email})`
+          )
+          user = result[0] as AuthRow | undefined
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg.includes("find_user_for_auth") && msg.includes("does not exist")) {
+            // Migration 002 not applied — fall back to direct users table query
+            type FallbackRow = {
+              id: string
+              email: string
+              password_hash: string
+              organization_id: string | null
+              role_id: string | null
+              status: string
+              [key: string]: unknown
+            }
+            const result = await serviceDb.execute<FallbackRow>(sql`
+              SELECT id, email, password AS password_hash,
+                     organization_id, role_id, status
+              FROM   users
+              WHERE  email = ${email}
+              LIMIT  1
+            `)
+            const row = result[0] as FallbackRow | undefined
+            if (row) {
+              user = {
+                id:              row.id,
+                email:           row.email,
+                password_hash:   row.password_hash ?? "",
+                organization_id: row.organization_id ?? "",
+                role_id:         row.role_id,
+                status:          row.status,
+              }
+            }
+          } else {
+            throw err  // Unexpected DB error — re-throw
+          }
+        }
+
         if (!user || !user.password_hash) return null
 
         const isValid = await bcrypt.compare(password, user.password_hash)
@@ -115,6 +169,22 @@ export const authConfig: NextAuthConfig = {
     },
 
     authorized({ auth: session, request: { nextUrl, headers } }) {
+      // ── Dev-mode bypass ──────────────────────────────────────────────────
+      if (isDevBypassEnabled()) {
+        const isPublicPath =
+          nextUrl.pathname === "/" ||
+          nextUrl.pathname.startsWith("/auth") ||
+          nextUrl.pathname.startsWith("/api/auth") ||
+          nextUrl.pathname.startsWith("/api/health") ||
+          nextUrl.pathname.startsWith("/pos-simulator") ||
+          nextUrl.pathname.startsWith("/api/pos/simulator")
+
+        if (!isPublicPath) {
+          console.warn(`[DEV] Auth bypass enabled — allowing access to ${nextUrl.pathname}`)
+        }
+        return true
+      }
+
       const isLoggedIn = !!session?.user
 
       // ── Public paths ─────────────────────────────────────────────────────

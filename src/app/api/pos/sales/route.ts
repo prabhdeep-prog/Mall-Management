@@ -98,41 +98,51 @@ export async function POST(request: Request) {
       end,
     )
 
-    // Upsert sales data into database
+    // Batch upsert — chunk into 500 rows to stay within Postgres parameter limit
+    const BATCH_SIZE = 500
     let syncedCount = 0
-    for (const sale of sales) {
-      await db
-        .insert(posSalesData)
-        .values({
-          posIntegrationId: integration.id,
-          tenantId: integration.tenantId,
-          propertyId: integration.propertyId,
-          leaseId: integration.leaseId,
-          salesDate: sale.date,
-          grossSales: String(sale.grossSales),
-          netSales: String(sale.netSales),
-          refunds: String(sale.refunds),
-          discounts: String(sale.discounts),
-          transactionCount: sale.transactionCount,
-          avgTransactionValue: String(sale.avgTransactionValue),
-          categoryBreakdown: sale.categoryBreakdown,
-          hourlyBreakdown: sale.hourlyBreakdown,
-          source: "pos_api",
-        })
-        .onConflictDoUpdate({
-          target: [posSalesData.posIntegrationId, posSalesData.salesDate],
-          set: {
-            grossSales: String(sale.grossSales),
-            netSales: String(sale.netSales),
-            refunds: String(sale.refunds),
-            discounts: String(sale.discounts),
-            transactionCount: sale.transactionCount,
-            avgTransactionValue: String(sale.avgTransactionValue),
-            categoryBreakdown: sale.categoryBreakdown,
-            hourlyBreakdown: sale.hourlyBreakdown,
-          },
-        })
-      syncedCount++
+
+    if (sales.length > 0) {
+      for (let i = 0; i < sales.length; i += BATCH_SIZE) {
+        const chunk = sales.slice(i, i + BATCH_SIZE)
+        await db
+          .insert(posSalesData)
+          .values(
+            chunk.map(sale => ({
+              posIntegrationId: integration.id,
+              tenantId: integration.tenantId,
+              propertyId: integration.propertyId,
+              leaseId: integration.leaseId,
+              // Drizzle date columns expect YYYY-MM-DD strings
+              salesDate: sale.date instanceof Date
+                ? sale.date.toISOString().split("T")[0]
+                : String(sale.date),
+              grossSales: String(sale.grossSales),
+              netSales: String(sale.netSales),
+              refunds: String(sale.refunds),
+              discounts: String(sale.discounts),
+              transactionCount: sale.transactionCount,
+              avgTransactionValue: String(sale.avgTransactionValue),
+              categoryBreakdown: sale.categoryBreakdown,
+              hourlyBreakdown: sale.hourlyBreakdown,
+              source: "pos_api",
+            }))
+          )
+          .onConflictDoUpdate({
+            target: [posSalesData.posIntegrationId, posSalesData.salesDate],
+            set: {
+              grossSales:          sql<string>`excluded.gross_sales`,
+              netSales:            sql<string>`excluded.net_sales`,
+              refunds:             sql<string>`excluded.refunds`,
+              discounts:           sql<string>`excluded.discounts`,
+              transactionCount:    sql<number>`excluded.transaction_count`,
+              avgTransactionValue: sql<string>`excluded.avg_transaction_value`,
+              categoryBreakdown:   sql<unknown>`excluded.category_breakdown`,
+              hourlyBreakdown:     sql<unknown>`excluded.hourly_breakdown`,
+            },
+          })
+        syncedCount += chunk.length
+      }
     }
 
     // Update integration sync status
