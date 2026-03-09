@@ -3,7 +3,16 @@ import { db } from "@/lib/db"
 import { posIntegrations, tenants, leases, posSalesData } from "@/lib/db/schema"
 import { eq, and, sql } from "drizzle-orm"
 
+// ── Production guard — simulator must never be accessible in prod ─────────────
+const PROD_BLOCK = process.env.NODE_ENV === "production"
+  ? new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    })
+  : null
+
 export async function GET(request: Request) {
+  if (PROD_BLOCK) return PROD_BLOCK
   try {
     const { searchParams } = new URL(request.url)
     const integrationId = searchParams.get("integrationId")
@@ -61,6 +70,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (PROD_BLOCK) return PROD_BLOCK
   try {
     const body = await request.json()
     const {

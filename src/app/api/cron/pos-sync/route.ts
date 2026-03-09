@@ -24,11 +24,10 @@ export const runtime = "nodejs"
 export const maxDuration = 300   // 5 min for Vercel Pro; adjust per plan
 
 export async function GET(req: NextRequest) {
-  // ── Auth ───────────────────────────────────────────────────────────────────
-  const authHeader = req.headers.get("authorization")
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  // ── Auth (timing-safe comparison to prevent secret extraction via timing) ──
+  const { guardCronRoute } = await import("@/lib/security/cron-auth")
+  const denied = await guardCronRoute(req)
+  if (denied) return denied
 
   const startedAt = Date.now()
 

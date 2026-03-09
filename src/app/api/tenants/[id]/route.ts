@@ -3,6 +3,7 @@ import { db } from "@/lib/db"
 import { tenants, leases, invoices, workOrders, properties } from "@/lib/db/schema"
 import { eq, and, desc, sql } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
+import { auth } from "@/lib/auth"
 
 // Extended fields stored in metadata
 interface TenantMetadata {
@@ -60,6 +61,21 @@ export async function GET(
     })
 
     if (!tenant) {
+      return NextResponse.json(
+        { success: false, error: "Tenant not found" },
+        { status: 404 }
+      )
+    }
+
+    // ── IDOR guard: org isolation ────────────────────────────────────────────
+    // Tenants belong to a property which belongs to an org.
+    // A user from org-A must never read a tenant from org-B — return 404
+    // (not 403) to avoid leaking resource existence.
+    const session = await auth()
+    if (
+      session?.user?.role !== "super_admin" &&
+      tenant.property?.organizationId !== session?.user?.organizationId
+    ) {
       return NextResponse.json(
         { success: false, error: "Tenant not found" },
         { status: 404 }
@@ -233,12 +249,25 @@ export async function PUT(
       website,
     } = body
 
-    // Check if tenant exists
+    // Check if tenant exists (include property for org-scoping)
     const existingTenant = await db.query.tenants.findFirst({
       where: eq(tenants.id, tenantId),
+      with: { property: true },
     })
 
     if (!existingTenant) {
+      return NextResponse.json(
+        { success: false, error: "Tenant not found" },
+        { status: 404 }
+      )
+    }
+
+    // ── IDOR guard: org isolation ────────────────────────────────────────────
+    const session = await auth()
+    if (
+      session?.user?.role !== "super_admin" &&
+      existingTenant.property?.organizationId !== session?.user?.organizationId
+    ) {
       return NextResponse.json(
         { success: false, error: "Tenant not found" },
         { status: 404 }
@@ -326,12 +355,25 @@ export async function DELETE(
       )
     }
 
-    // Check if tenant exists
+    // Check if tenant exists (include property for org-scoping)
     const existingTenant = await db.query.tenants.findFirst({
       where: eq(tenants.id, tenantId),
+      with: { property: true },
     })
 
     if (!existingTenant) {
+      return NextResponse.json(
+        { success: false, error: "Tenant not found" },
+        { status: 404 }
+      )
+    }
+
+    // ── IDOR guard: org isolation ────────────────────────────────────────────
+    const session = await auth()
+    if (
+      session?.user?.role !== "super_admin" &&
+      existingTenant.property?.organizationId !== session?.user?.organizationId
+    ) {
       return NextResponse.json(
         { success: false, error: "Tenant not found" },
         { status: 404 }

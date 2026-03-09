@@ -58,6 +58,46 @@ async function redisGet(key: string): Promise<string | null> {
   }
 }
 
+
+// ── Security headers ──────────────────────────────────────────────────────────
+// Applied to every response after auth and tenant resolution.
+function addSecurityHeaders(response: NextResponse): NextResponse {
+  // Prevent clickjacking
+  response.headers.set("X-Frame-Options", "DENY")
+  // Prevent MIME-type sniffing
+  response.headers.set("X-Content-Type-Options", "nosniff")
+  // Referrer policy — no full URL leak on cross-origin navigations
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
+  // Disable browser features the app doesn't use
+  response.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=()"
+  )
+  // HSTS — production only (local dev uses HTTP)
+  if (process.env.NODE_ENV === "production") {
+    response.headers.set(
+      "Strict-Transport-Security",
+      "max-age=63072000; includeSubDomains; preload"
+    )
+  }
+  // Content Security Policy — allow Next.js + Recharts + Upstash
+  response.headers.set(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // Next.js requires unsafe-eval in dev
+      "style-src 'self' 'unsafe-inline'",                // Tailwind inline styles
+      "img-src 'self' data: blob: https:",
+      "font-src 'self'",
+      "connect-src 'self' https://*.upstash.io https://api.anthropic.com wss:",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; ")
+  )
+  return response
+}
+
 export default async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl
   const host = request.headers.get("host") ?? ""
@@ -115,7 +155,8 @@ export default async function middleware(request: NextRequest): Promise<NextResp
   if (orgId)   response.headers.set("x-org-id",   orgId)
   if (orgSlug) response.headers.set("x-org-slug", orgSlug)
 
-  return response
+  // Apply security headers to every response
+  return addSecurityHeaders(response)
 }
 
 export const config = {

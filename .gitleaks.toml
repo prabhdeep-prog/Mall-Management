@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Gitleaks configuration — secret scanning for the Mall Management Platform
+# https://github.com/gitleaks/gitleaks
+#
+# Run locally: gitleaks detect --source . --verbose
+# Or via pre-commit: gitleaks protect --staged
+# ─────────────────────────────────────────────────────────────────────────────
+
+title = "Mall Management Platform — Gitleaks Config"
+
+[extend]
+# Extend the upstream default ruleset (covers AWS, GCP, Stripe, GitHub, etc.)
+useDefault = true
+
+# ── Custom rules ──────────────────────────────────────────────────────────────
+
+[[rules]]
+id          = "mallos-encryption-key"
+description = "AES-256 encryption key (64 hex chars)"
+regex       = '''(?i)(encryption[_-]key|ENCRYPTION_KEY)\s*[:=]\s*["']?[0-9a-f]{64}["']?'''
+tags        = ["encryption", "key"]
+
+[[rules]]
+id          = "neon-database-url"
+description = "Neon Postgres connection string"
+regex       = '''postgresql://[^:]+:[^@]+@[^/]*\.neon\.tech/[^\s"']+'''
+tags        = ["database", "neon"]
+
+[[rules]]
+id          = "upstash-redis-token"
+description = "Upstash Redis REST token"
+regex       = '''(?i)(upstash[_-]redis[_-]rest[_-]token)\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}["']?'''
+tags        = ["redis", "upstash"]
+
+[[rules]]
+id          = "anthropic-api-key"
+description = "Anthropic API key"
+regex       = '''sk-ant-api[0-9]{2}-[A-Za-z0-9\-_]{80,}'''
+tags        = ["ai", "anthropic"]
+
+[[rules]]
+id          = "razorpay-secret"
+description = "Razorpay key secret or webhook secret"
+regex       = '''(?i)(razorpay[_-](key[_-]secret|webhook[_-]secret))\s*[:=]\s*["']?[A-Za-z0-9]{20,}["']?'''
+tags        = ["payment", "razorpay"]
+
+[[rules]]
+id          = "cron-secret"
+description = "Cron job bearer token"
+regex       = '''(?i)(cron[_-]secret)\s*[:=]\s*["']?[A-Za-z0-9+/=]{16,}["']?'''
+tags        = ["cron", "auth"]
+
+# ── Allowlists ────────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "Safe files — examples, docs, tests, config"
+paths = [
+  # Example/template files (contain placeholder values)
+  ".env.example",
+  ".env.test",
+  # Test fixtures (fake credentials only)
+  "tests/fixtures/",
+  "tests/__fixtures__/",
+  # Documentation
+  "docs/",
+  "*.md",
+  # Gitleaks config itself
+  ".gitleaks.toml",
+  # Lock files
+  "pnpm-lock.yaml",
+  "package-lock.json",
+]
+
+regexes = [
+  # Placeholder patterns used in examples
+  "replace-with",
+  "your-.*-here",
+  "example\\.com",
+  "localhost",
+  # Test / dummy UUIDs
+  "00000000-0000-0000-0000-000000000000",
+  # Base64 test strings (short, clearly fake)
+  "dGVzdA==",
+]
+
+# ── Scan options ──────────────────────────────────────────────────────────────
+
+[options]
+# Scan commits, not just the working tree
+# CLI equivalent: gitleaks detect --source .
+verbose = false
+redact  = true        # Replace matched secret with REDACTED in output

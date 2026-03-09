@@ -315,8 +315,9 @@ export async function checkRateLimit(
     return { allowed, remaining, resetAt }
   } catch (error) {
     console.error('Rate limit error:', error)
-    // Allow request on error (fail open)
-    return { allowed: true, remaining: limit, resetAt: now + window }
+    // Fail CLOSED on Redis error — safer default for security-sensitive limits.
+    // Callers that need high availability can handle the { allowed: false } result.
+    return { allowed: false, remaining: 0, resetAt: now + window }
   }
 }
 
