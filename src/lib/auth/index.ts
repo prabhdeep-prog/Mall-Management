@@ -49,6 +49,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         interface AuthRow {
           id: string
           email: string
+          name: string | null
           password_hash: string
           organization_id: string
           role_id: string | null
@@ -68,6 +69,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             type FallbackRow = {
               id: string
               email: string
+              name: string | null
               password_hash: string
               organization_id: string | null
               role_id: string | null
@@ -75,7 +77,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               [key: string]: unknown
             }
             const result = await serviceDb.execute<FallbackRow>(sql`
-              SELECT id, email, password AS password_hash,
+              SELECT id, email, name, password AS password_hash,
                      organization_id, role_id, status
               FROM   users
               WHERE  email = ${email}
@@ -86,6 +88,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               user = {
                 id:              row.id,
                 email:           row.email,
+                name:            row.name,
                 password_hash:   row.password_hash ?? "",
                 organization_id: row.organization_id ?? "",
                 role_id:         row.role_id,
@@ -109,7 +112,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return {
           id:             user.id,
           email:          user.email,
-          name:           "",  
+          name:           user.name ?? "",  
           role,
           organizationId: user.organization_id ?? "",
         }
