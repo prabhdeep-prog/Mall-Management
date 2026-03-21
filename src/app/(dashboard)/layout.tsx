@@ -5,6 +5,8 @@ import { SecondarySidebar } from "@/components/nav/secondary-sidebar"
 import { CommandPalette } from "@/components/nav/command-palette"
 import { Header } from "@/components/dashboard/header"
 
+export const dynamic = "force-dynamic"
+
 /**
  * Dashboard Shell Layout
  * ───────────────────────

@@ -368,7 +368,7 @@ function FinancialsPageContent() {
   const filteredInvoices = invoices.filter((inv) => {
     const matchesSearch =
       inv.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      inv.tenant?.businessName.toLowerCase().includes(searchQuery.toLowerCase())
+      (inv.tenant?.businessName?.toLowerCase() || "").includes(searchQuery.toLowerCase())
     return matchesSearch
   })
 
