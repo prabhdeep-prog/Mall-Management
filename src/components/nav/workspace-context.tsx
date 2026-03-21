@@ -46,19 +46,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive active workspace from current URL on mount and navigation
   const detectedWorkspace = workspaceFromPathname(pathname)
 
-  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>(
-    () => {
-      if (typeof window === "undefined") return detectedWorkspace
-      const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY)
-      return (stored as WorkspaceId) ?? detectedWorkspace
-    }
-  )
+  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>(detectedWorkspace)
 
-  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(() => {
-    if (typeof window === "undefined") return true
+  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(true)
+
+  React.useEffect(() => {
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY)
-    return stored === null ? true : stored === "true"
-  })
+    if (stored !== null) {
+      setSidebarOpenState(stored === "true")
+    }
+  }, [])
 
   const [isPaletteOpen, setPaletteOpen] = React.useState(false)
   const [paletteInitialQuery, setPaletteInitialQuery] = React.useState("")
