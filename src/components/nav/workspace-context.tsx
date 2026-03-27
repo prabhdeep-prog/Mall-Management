@@ -43,22 +43,21 @@ const WORKSPACE_STORAGE_KEY = "mallos:active-workspace"
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  // Derive active workspace from current URL on mount and navigation
-  const detectedWorkspace = workspaceFromPathname(pathname)
+  // Always initialize to 'operations' strictly to ensure SSR and Client HTML
+  // match perfectly on initial load (preventing React hydration crashes).
+  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>("operations")
+  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(true)
 
-  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>(
-    () => {
-      if (typeof window === "undefined") return detectedWorkspace
-      const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY)
-      return (stored as WorkspaceId) ?? detectedWorkspace
-    }
-  )
-
-  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(() => {
-    if (typeof window === "undefined") return true
+  React.useEffect(() => {
+    // Immediately calculate real workspace on client mount
+    const detectedWorkspace = workspaceFromPathname(pathname)
+    setActiveWorkspaceState(detectedWorkspace)
+    
     const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY)
-    return stored === null ? true : stored === "true"
-  })
+    if (stored !== null) {
+      setSidebarOpenState(stored === "true")
+    }
+  }, [pathname])
 
   const [isPaletteOpen, setPaletteOpen] = React.useState(false)
   const [paletteInitialQuery, setPaletteInitialQuery] = React.useState("")

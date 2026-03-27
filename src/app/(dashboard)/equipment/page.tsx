@@ -604,18 +604,18 @@ export default function EquipmentPage() {
       </div>
 
       {/* AI Insights */}
-      <Card className="border-orange-200 bg-orange-50/30">
+      <Card className="border-orange-200 bg-orange-50/30 dark:border-orange-900 dark:bg-orange-950/20">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Bot className="h-5 w-5 text-orange-600" />
+            <Bot className="h-5 w-5 text-orange-600 dark:text-orange-400" />
             <CardTitle className="text-base">Maintenance Coordinator Predictions</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex items-start gap-3 p-3 bg-white rounded-lg border">
-              <div className="p-2 bg-red-100 rounded-lg">
-                <AlertTriangle className="h-4 w-4 text-red-600" />
+            <div className="flex items-start gap-3 p-3 bg-card rounded-lg border">
+              <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
               </div>
               <div>
                 <p className="text-sm font-medium">Critical: AHU Unit #3</p>
@@ -624,9 +624,9 @@ export default function EquipmentPage() {
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-3 p-3 bg-white rounded-lg border">
-              <div className="p-2 bg-yellow-100 rounded-lg">
-                <Clock className="h-4 w-4 text-yellow-600" />
+            <div className="flex items-start gap-3 p-3 bg-card rounded-lg border">
+              <div className="p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+                <Clock className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
               </div>
               <div>
                 <p className="text-sm font-medium">Upcoming: 3 Maintenance Due</p>
@@ -635,9 +635,9 @@ export default function EquipmentPage() {
                 </p>
               </div>
             </div>
-            <div className="flex items-start gap-3 p-3 bg-white rounded-lg border">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <div className="flex items-start gap-3 p-3 bg-card rounded-lg border">
+              <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
               </div>
               <div>
                 <p className="text-sm font-medium">Well Maintained</p>

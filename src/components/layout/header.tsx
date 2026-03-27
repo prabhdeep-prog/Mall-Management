@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { usePropertyStore } from "@/features/properties/stores/property-store"
 import { usePendingApprovals } from "@/features/agents/hooks/use-pending-approvals"
 import { signOut, useSession } from "next-auth/react"
@@ -22,17 +23,16 @@ import { signOut, useSession } from "next-auth/react"
 export function Header() {
   const router = useRouter()
   const { data: session } = useSession()
-  const { 
-    properties, 
-    selectedProperty, 
-    isLoading, 
-    setSelectedProperty, 
-    fetchProperties 
+  const {
+    properties,
+    selectedProperty,
+    isLoading,
+    setSelectedProperty,
+    fetchProperties
   } = usePropertyStore()
-  
+
   const { pendingApprovals, isLoadingApprovals } = usePendingApprovals()
 
-  // Fetch properties on mount
   React.useEffect(() => {
     fetchProperties()
   }, [fetchProperties])
@@ -45,13 +45,12 @@ export function Header() {
     await signOut({ callbackUrl: "/auth/login" })
   }
 
-  // Get user initials
   const userInitials = session?.user?.name
     ? session.user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
     : "U"
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-white px-6 dark:bg-gray-950">
+    <header className="flex h-16 items-center justify-between border-b bg-background px-6">
       {/* Left Side - Property Selector */}
       <div className="flex items-center gap-4">
         <DropdownMenu>
@@ -94,7 +93,7 @@ export function Header() {
                   <div className="flex items-center gap-2 w-full">
                     <div
                       className={`h-2 w-2 rounded-full shrink-0 ${
-                        property.id === selectedProperty?.id ? "bg-green-500" : "bg-gray-300"
+                        property.id === selectedProperty?.id ? "bg-green-500" : "bg-muted-foreground/30"
                       }`}
                     />
                     <div className="flex-1 min-w-0">
@@ -106,7 +105,7 @@ export function Header() {
               ))
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem 
+            <DropdownMenuItem
               className="cursor-pointer text-primary"
               onClick={handleAddProperty}
             >
@@ -126,8 +125,8 @@ export function Header() {
         </div>
       </div>
 
-      {/* Right Side - Notifications & Profile */}
-      <div className="flex items-center gap-4">
+      {/* Right Side - Theme Toggle, Notifications & Profile */}
+      <div className="flex items-center gap-2">
         {/* Pending Approvals Badge */}
         {!isLoadingApprovals && pendingApprovals > 0 && (
           <Button variant="outline" size="sm" className="gap-2" asChild>
@@ -139,6 +138,9 @@ export function Header() {
             </a>
           </Button>
         )}
+
+        {/* Theme Toggle */}
+        <ThemeToggle />
 
         {/* Notifications */}
         <DropdownMenu>

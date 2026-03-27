@@ -1,0 +1,122 @@
+name: Security Scan
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runs a suite of security checks on every push and PR to main:
+#
+#   1. gitleaks   — secret / credential scanning (blocks commit of real keys)
+#   2. codeql     — SAST (JavaScript/TypeScript static analysis)
+#   3. trivy      — dependency & container vulnerability scan
+#   4. audit      — pnpm audit (node_modules CVE check)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run full scan weekly on Sunday at 03:00 UTC (catches newly-disclosed CVEs)
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+  security-events: write   # required by CodeQL to upload SARIF results
+  actions: read
+
+jobs:
+  # ── 1. Secret scanning (Gitleaks) ──────────────────────────────────────────
+  gitleaks:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so gitleaks can scan all commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # uncomment for org/enterprise
+
+  # ── 2. SAST — CodeQL (JavaScript / TypeScript) ────────────────────────────
+  codeql:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    # CodeQL can take a while; don't block PRs if it times out on scheduled runs
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"
+
+  # ── 3. Dependency vulnerability scan (Trivy) ──────────────────────────────
+  trivy:
+    name: Dependency Scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy on filesystem (node_modules + lock file)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          exit-code: "1"          # fail the job on CRITICAL/HIGH findings
+          format: sarif
+          output: trivy-results.sarif
+        continue-on-error: true   # upload report even if scan fails
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  # ── 4. pnpm audit (CVE check against npm advisory database) ───────────────
+  pnpm-audit:
+    name: pnpm Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm audit
+        # --audit-level high: only fail on HIGH or CRITICAL advisories
+        run: pnpm audit --audit-level high
+        continue-on-error: true   # report but don't hard-block on known false-positives

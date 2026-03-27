@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { users, roles, organizations } from "@/lib/db/schema"
-import { eq, desc, and, ilike, or } from "drizzle-orm"
+import { eq, desc, and, ilike, or, sql } from "drizzle-orm"
 import { requirePermission, PERMISSIONS } from "@/lib/auth/rbac"
 import bcrypt from "bcryptjs"
 
@@ -13,85 +13,89 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Check permission
     const { authorized, error } = await requirePermission(PERMISSIONS.USERS_VIEW)
     if (!authorized) {
       return NextResponse.json({ error }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
-    const search = searchParams.get("search")
-    const status = searchParams.get("status")
-    const roleId = searchParams.get("roleId")
+    const search         = searchParams.get("search")
+    const status         = searchParams.get("status")
+    const roleId         = searchParams.get("roleId")
     const organizationId = searchParams.get("organizationId")
+    const page           = Math.max(1, parseInt(searchParams.get("page")  || "1",  10))
+    const limit          = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)))
+    const offset         = (page - 1) * limit
 
-    // Build query conditions
+    // Build conditions in SQL
     const conditions = []
-    
+
     // Non-super admins can only see users in their organization
     if (session.user.role !== "super_admin" && session.user.organizationId) {
       conditions.push(eq(users.organizationId, session.user.organizationId))
     }
-
-    if (status) {
-      conditions.push(eq(users.status, status))
-    }
-
-    if (roleId) {
-      conditions.push(eq(users.roleId, roleId))
-    }
-
+    if (status) conditions.push(eq(users.status, status))
+    if (roleId) conditions.push(eq(users.roleId, roleId))
     if (organizationId && session.user.role === "super_admin") {
       conditions.push(eq(users.organizationId, organizationId))
     }
-
-    const usersWithRoles = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        phone: users.phone,
-        status: users.status,
-        properties: users.properties,
-        preferences: users.preferences,
-        createdAt: users.createdAt,
-        updatedAt: users.updatedAt,
-        role: {
-          id: roles.id,
-          name: roles.name,
-          description: roles.description,
-        },
-        organization: {
-          id: organizations.id,
-          name: organizations.name,
-          code: organizations.code,
-        },
-      })
-      .from(users)
-      .leftJoin(roles, eq(users.roleId, roles.id))
-      .leftJoin(organizations, eq(users.organizationId, organizations.id))
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(users.createdAt))
-
-    // Filter by search query if provided
-    let result = usersWithRoles
+    // Push search to SQL using ILIKE — avoids loading all users into memory
     if (search) {
-      const searchLower = search.toLowerCase()
-      result = usersWithRoles.filter(
-        (user) =>
-          user.name?.toLowerCase().includes(searchLower) ||
-          user.email.toLowerCase().includes(searchLower) ||
-          user.role?.name?.toLowerCase().includes(searchLower)
+      conditions.push(
+        or(
+          ilike(users.name, `%${search}%`),
+          ilike(users.email, `%${search}%`),
+        )!
       )
     }
 
-    return NextResponse.json({ success: true, data: result })
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    const [usersWithRoles, [{ total }]] = await Promise.all([
+      db
+        .select({
+          id:           users.id,
+          email:        users.email,
+          name:         users.name,
+          phone:        users.phone,
+          status:       users.status,
+          properties:   users.properties,
+          preferences:  users.preferences,
+          createdAt:    users.createdAt,
+          updatedAt:    users.updatedAt,
+          role: {
+            id:          roles.id,
+            name:        roles.name,
+            description: roles.description,
+          },
+          organization: {
+            id:   organizations.id,
+            name: organizations.name,
+            code: organizations.code,
+          },
+        })
+        .from(users)
+        .leftJoin(roles,         eq(users.roleId,         roles.id))
+        .leftJoin(organizations, eq(users.organizationId, organizations.id))
+        .where(where)
+        .orderBy(desc(users.createdAt))
+        .limit(limit)
+        .offset(offset),
+
+      db
+        .select({ total: sql<number>`count(*)::integer` })
+        .from(users)
+        .where(where),
+    ])
+
+    return NextResponse.json({
+      success: true,
+      data: usersWithRoles,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    })
   } catch (error) {
     console.error("Get users error:", error)
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 

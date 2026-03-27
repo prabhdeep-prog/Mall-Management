@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { complianceRequirements } from "@/lib/db/schema"
-import { eq, and } from "drizzle-orm"
+import { eq, and, sql } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
 import { z } from "zod"
 
@@ -30,28 +30,38 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get("propertyId")
-    const status = searchParams.get("status")
-    const riskLevel = searchParams.get("riskLevel")
+    const status     = searchParams.get("status")
+    const riskLevel  = searchParams.get("riskLevel")
+    const page       = Math.max(1, parseInt(searchParams.get("page")  || "1",  10))
+    const limit      = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)))
+    const offset     = (page - 1) * limit
 
-    let query = db.query.complianceRequirements.findMany({
-      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    // Push all filters to the database — no app-level filtering
+    const conditions = []
+    if (propertyId) conditions.push(eq(complianceRequirements.propertyId, propertyId))
+    if (status)     conditions.push(eq(complianceRequirements.status, status))
+    if (riskLevel)  conditions.push(eq(complianceRequirements.riskLevel, riskLevel))
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined
+
+    const [items, [{ total }]] = await Promise.all([
+      db.query.complianceRequirements.findMany({
+        where,
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+        limit,
+        offset,
+      }),
+      db
+        .select({ total: sql<number>`count(*)::integer` })
+        .from(complianceRequirements)
+        .where(where),
+    ])
+
+    return NextResponse.json({
+      success: true,
+      data: items,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     })
-
-    const requirements = await query
-
-    // Filter on application level if needed (Drizzle doesn't support chained where easily)
-    let filtered = requirements
-    if (propertyId) {
-      filtered = filtered.filter(r => r.propertyId === propertyId)
-    }
-    if (status) {
-      filtered = filtered.filter(r => r.status === status)
-    }
-    if (riskLevel) {
-      filtered = filtered.filter(r => r.riskLevel === riskLevel)
-    }
-
-    return NextResponse.json({ success: true, data: filtered })
   } catch (error) {
     console.error("Error fetching compliance requirements:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

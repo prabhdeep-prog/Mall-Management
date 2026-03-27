@@ -12,8 +12,10 @@ import {
   time,
   index,
   uniqueIndex,
+  primaryKey,
+  check,
 } from "drizzle-orm/pg-core"
-import { relations } from "drizzle-orm"
+import { relations, sql } from "drizzle-orm"
 
 // ============================================================================
 // ORGANIZATIONS & PROPERTIES
@@ -53,6 +55,7 @@ export const properties = pgTable("properties", {
 }, (table) => ({
   orgIdx: index("idx_properties_org").on(table.organizationId),
   statusIdx: index("idx_properties_status").on(table.status),
+  statusCheck: check("check_properties_status", sql`${table.status} IN ('active', 'under_construction', 'closed')`),
 }))
 
 // ============================================================================
@@ -83,6 +86,7 @@ export const tenants = pgTable("tenants", {
 }, (table) => ({
   propertyIdx: index("idx_tenants_property").on(table.propertyId),
   statusIdx: index("idx_tenants_status").on(table.status),
+  statusCheck: check("check_tenants_status", sql`${table.status} IN ('active', 'inactive', 'suspended')`),
 }))
 
 export const leases = pgTable("leases", {
@@ -121,6 +125,8 @@ export const leases = pgTable("leases", {
   tenantIdx: index("idx_leases_tenant").on(table.tenantId),
   propertyIdx: index("idx_leases_property").on(table.propertyId),
   datesIdx: index("idx_leases_dates").on(table.startDate, table.endDate),
+  statusIdx: index("idx_leases_status").on(table.status),
+  statusCheck: check("check_leases_status", sql`${table.status} IN ('draft', 'active', 'expired', 'terminated')`),
 }))
 
 // ============================================================================
@@ -157,6 +163,8 @@ export const invoices = pgTable("invoices", {
   leaseIdx: index("idx_invoices_lease").on(table.leaseId),
   statusIdx: index("idx_invoices_status").on(table.status),
   dueDateIdx: index("idx_invoices_due_date").on(table.dueDate),
+  typeIdx: index("idx_invoices_type").on(table.invoiceType),
+  statusCheck: check("check_invoices_status", sql`${table.status} IN ('pending', 'paid', 'overdue', 'cancelled')`),
 }))
 
 export const payments = pgTable("payments", {
@@ -203,6 +211,7 @@ export const expenses = pgTable("expenses", {
 }, (table) => ({
   propertyIdx: index("idx_expenses_property").on(table.propertyId),
   dateIdx: index("idx_expenses_date").on(table.expenseDate),
+  categoryIdx: index("idx_expenses_category").on(table.category),
 }))
 
 // ============================================================================
@@ -273,6 +282,9 @@ export const workOrders = pgTable("work_orders", {
   propertyIdx: index("idx_work_orders_property").on(table.propertyId),
   statusIdx: index("idx_work_orders_status").on(table.status),
   scheduledIdx: index("idx_work_orders_scheduled").on(table.scheduledDate),
+  priorityIdx: index("idx_work_orders_priority").on(table.priority),
+  priorityCheck: check("check_work_orders_priority", sql`${table.priority} IN ('low', 'medium', 'high', 'critical')`),
+  statusCheck: check("check_work_orders_status", sql`${table.status} IN ('open', 'assigned', 'in_progress', 'completed', 'cancelled')`),
 }))
 
 export const vendors = pgTable("vendors", {
@@ -298,7 +310,10 @@ export const vendors = pgTable("vendors", {
   metadata: jsonb("metadata").default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-})
+}, (table) => ({
+  typeIdx:   index("idx_vendors_type").on(table.type),
+  statusIdx: index("idx_vendors_status").on(table.status),
+}))
 
 // ============================================================================
 // COMMUNICATION & INTERACTIONS
@@ -325,6 +340,7 @@ export const conversations = pgTable("conversations", {
 }, (table) => ({
   propertyIdx: index("idx_conversations_property").on(table.propertyId),
   tenantIdx: index("idx_conversations_tenant").on(table.tenantId),
+  statusIdx: index("idx_conversations_status").on(table.status),
 }))
 
 export const messages = pgTable("messages", {
@@ -339,6 +355,7 @@ export const messages = pgTable("messages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   conversationIdx: index("idx_messages_conversation").on(table.conversationId),
+  createdAtIdx: index("idx_messages_created_at").on(table.createdAt),
 }))
 
 export const notifications = pgTable("notifications", {
@@ -545,16 +562,19 @@ export const users = pgTable("users", {
   password: varchar("password", { length: 255 }), // Hashed
   name: varchar("name", { length: 255 }),
   phone: varchar("phone", { length: 20 }),
-  roleId: uuid("role_id"), // References your RBAC roles table
+  roleId: uuid("role_id").references(() => roles.id, { onDelete: "set null" }), // FK to roles
   organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
-  properties: jsonb("properties").default([]), // Property IDs user has access to
+  properties: jsonb("properties").default([]), // Kept for backward compat — see usersToProperties
   status: varchar("status", { length: 50 }).default("active"),
   preferences: jsonb("preferences").default({}),
   emailVerified: timestamp("email_verified"),
   image: varchar("image", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-})
+}, (table) => ({
+  roleIdx: index("idx_users_role").on(table.roleId),
+  orgIdx: index("idx_users_org").on(table.organizationId),
+}))
 
 export const roles = pgTable("roles", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -564,6 +584,15 @@ export const roles = pgTable("roles", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 })
+
+// Junction table: normalized user→property access control
+// Replaces the jsonb `properties` array on the users table for relational queries
+export const usersToProperties = pgTable("users_to_properties", {
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  propertyId: uuid("property_id").notNull().references(() => properties.id, { onDelete: "cascade" }),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.userId, table.propertyId] }),
+}))
 
 // ============================================================================
 // RELATIONS
@@ -588,6 +617,7 @@ export const propertiesRelations = relations(properties, ({ one, many }) => ({
   dailyMetrics: many(dailyMetrics),
   complianceRequirements: many(complianceRequirements),
   agentActions: many(agentActions),
+  userAccess: many(usersToProperties),
 }))
 
 export const tenantsRelations = relations(tenants, ({ one, many }) => ({
@@ -650,7 +680,7 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   }),
 }))
 
-export const usersRelations = relations(users, ({ one }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [users.organizationId],
     references: [organizations.id],
@@ -658,6 +688,18 @@ export const usersRelations = relations(users, ({ one }) => ({
   role: one(roles, {
     fields: [users.roleId],
     references: [roles.id],
+  }),
+  propertyAccess: many(usersToProperties),
+}))
+
+export const usersToPropertiesRelations = relations(usersToProperties, ({ one }) => ({
+  user: one(users, {
+    fields: [usersToProperties.userId],
+    references: [users.id],
+  }),
+  property: one(properties, {
+    fields: [usersToProperties.propertyId],
+    references: [properties.id],
   }),
 }))
 
@@ -738,4 +780,6 @@ export type PosIntegration = typeof posIntegrations.$inferSelect
 export type NewPosIntegration = typeof posIntegrations.$inferInsert
 export type PosSalesData = typeof posSalesData.$inferSelect
 export type NewPosSalesData = typeof posSalesData.$inferInsert
+export type UserToProperty = typeof usersToProperties.$inferSelect
+export type NewUserToProperty = typeof usersToProperties.$inferInsert
 

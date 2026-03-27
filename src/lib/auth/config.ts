@@ -18,11 +18,6 @@
  */
 
 import type { NextAuthConfig } from "next-auth"
-import Credentials from "next-auth/providers/credentials"
-import { z } from "zod"
-import bcrypt from "bcryptjs"
-import { sql } from "drizzle-orm"
-import { serviceDb } from "@/lib/db"
 import type { UserRole } from "./index"
 
 if (!process.env.AUTH_SECRET) {
@@ -32,68 +27,20 @@ if (!process.env.AUTH_SECRET) {
   console.warn("⚠️  AUTH_SECRET is not set — using insecure default for development")
 }
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-})
-
-// Looks up role name from the roles table
-async function getRoleName(roleId: string | null): Promise<UserRole> {
-  if (!roleId) return "viewer"
-  const result = await serviceDb.execute<{ name: string }>(
-    sql`SELECT name FROM roles WHERE id = ${roleId}::uuid LIMIT 1`
+/**
+ * Dev-mode bypass guard
+ * REQUIRES explicit DEV_AUTH_BYPASS=true in .env.local — never set in CI/prod.
+ */
+export function isDevBypassEnabled(): boolean {
+  return (
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_AUTH_BYPASS === "true" &&
+    process.env.CI !== "true" // never bypass in CI
   )
-  const name = result.rows[0]?.name as UserRole | undefined
-  return name ?? "viewer"
 }
 
 export const authConfig: NextAuthConfig = {
-  providers: [
-    Credentials({
-      name: "credentials",
-      credentials: {
-        email:    { label: "Email",    type: "email"    },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        const parsed = loginSchema.safeParse(credentials)
-        if (!parsed.success) return null
-
-        const { email, password } = parsed.data
-
-        // ── SECURITY DEFINER function — no org context needed ─────────────
-        // This is the ONLY place we query the users table without RLS.
-        // find_user_for_auth() runs as superuser internally but returns
-        // only the minimum fields required for authentication.
-        const result = await serviceDb.execute<{
-          id: string
-          email: string
-          password_hash: string
-          organization_id: string
-          role_id: string | null
-          status: string
-        }>(sql`SELECT * FROM find_user_for_auth(${email})`)
-
-        const user = result.rows[0]
-        if (!user || !user.password_hash) return null
-
-        const isValid = await bcrypt.compare(password, user.password_hash)
-        if (!isValid) return null
-
-        if (user.status === "suspended") return null
-
-        const role = await getRoleName(user.role_id)
-
-        return {
-          id:             user.id,
-          email:          user.email,
-          name:           "",  // Populated in jwt callback from DB
-          role,
-          organizationId: user.organization_id ?? "",
-        }
-      },
-    }),
-  ],
+  providers: [],
 
   callbacks: {
     async jwt({ token, user }) {
@@ -115,6 +62,22 @@ export const authConfig: NextAuthConfig = {
     },
 
     authorized({ auth: session, request: { nextUrl, headers } }) {
+      // ── Dev-mode bypass ──────────────────────────────────────────────────
+      if (isDevBypassEnabled()) {
+        const isPublicPath =
+          nextUrl.pathname === "/" ||
+          nextUrl.pathname.startsWith("/auth") ||
+          nextUrl.pathname.startsWith("/api/auth") ||
+          nextUrl.pathname.startsWith("/api/health") ||
+          nextUrl.pathname.startsWith("/pos-simulator") ||
+          nextUrl.pathname.startsWith("/api/pos/simulator")
+
+        if (!isPublicPath) {
+          console.warn(`[DEV] Auth bypass enabled — allowing access to ${nextUrl.pathname}`)
+        }
+        return true
+      }
+
       const isLoggedIn = !!session?.user
 
       // ── Public paths ─────────────────────────────────────────────────────

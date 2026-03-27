@@ -29,6 +29,10 @@ const envSchema = z.object({
   // Feature Flags
   ENABLE_AGENTS: z.enum(["true", "false"]).default("true").transform(v => v === "true"),
   ENABLE_POS_INTEGRATION: z.enum(["true", "false"]).default("true").transform(v => v === "true"),
+  
+  // Dev-mode bypass
+  DEV_AUTH_BYPASS: z.string().optional().default("false"),
+  CI: z.string().optional().default("false"),
 })
 
 type EnvSchema = z.infer<typeof envSchema>

@@ -35,51 +35,79 @@ export async function GET(request: NextRequest) {
           .where(organizationId ? eq(properties.organizationId, organizationId) : undefined)
           .orderBy(desc(properties.createdAt))
 
-        // Import tenants and leases for counting
+        // Import for batch queries
         const { tenants, leases } = await import("@/lib/db/schema")
+        const { inArray } = await import("drizzle-orm")
 
-        // Get counts and metrics for each property
-        const result = await Promise.all(
-          propertiesData.map(async (property) => {
-            // Count tenants for this property
-            const [tenantResult] = await db
-              .select({ count: sql<number>`count(*)::integer` })
-              .from(tenants)
-              .where(eq(tenants.propertyId, property.id))
-            
-            // Count active leases for this property
-            const [leaseResult] = await db
-              .select({ count: sql<number>`count(*)::integer` })
-              .from(leases)
-              .where(
-                and(
-                  eq(leases.propertyId, property.id),
-                  eq(leases.status, "active")
-                )
-              )
+        if (propertiesData.length === 0) return []
 
-            // Get latest metrics
-            const latestMetric = await db.query.dailyMetrics.findFirst({
-              where: eq(dailyMetrics.propertyId, property.id),
-              orderBy: desc(dailyMetrics.metricDate),
+        const propertyIds = propertiesData.map(p => p.id)
+
+        // ── 3 batch queries instead of 3N per-property queries ────────────────
+        const [tenantCounts, leaseCounts, latestMetrics] = await Promise.all([
+          // 1. Tenant count per property (single GROUP BY query)
+          db
+            .select({
+              propertyId: tenants.propertyId,
+              count: sql<number>`count(*)::integer`,
             })
+            .from(tenants)
+            .where(inArray(tenants.propertyId, propertyIds))
+            .groupBy(tenants.propertyId),
 
-            return {
-              ...property,
-              tenantCount: Number(tenantResult?.count) || 0,
-              activeLeases: Number(leaseResult?.count) || 0,
-              metrics: latestMetric
-                ? {
-                    occupancyRate: latestMetric.occupancyRate,
-                    collectionRate: latestMetric.collectionRate,
-                    revenue: latestMetric.revenue,
-                    footTraffic: latestMetric.footTraffic,
-                  }
-                : null,
-            }
-          })
-        )
-        return result
+          // 2. Active lease count per property (single GROUP BY query)
+          db
+            .select({
+              propertyId: leases.propertyId,
+              count: sql<number>`count(*)::integer`,
+            })
+            .from(leases)
+            .where(
+              and(
+                inArray(leases.propertyId, propertyIds),
+                eq(leases.status, "active")
+              )
+            )
+            .groupBy(leases.propertyId),
+
+          // 3. Latest metric per property: ordered by (propertyId, metricDate DESC),
+          // then deduplicated in JS — keeps first (= most recent) row per property.
+          db
+            .select({
+              propertyId:     dailyMetrics.propertyId,
+              metricDate:     dailyMetrics.metricDate,
+              occupancyRate:  dailyMetrics.occupancyRate,
+              collectionRate: dailyMetrics.collectionRate,
+              revenue:        dailyMetrics.revenue,
+              footTraffic:    dailyMetrics.footTraffic,
+            })
+            .from(dailyMetrics)
+            .where(inArray(dailyMetrics.propertyId, propertyIds))
+            .orderBy(dailyMetrics.propertyId, desc(dailyMetrics.metricDate)),
+        ])
+
+        // Build lookup maps for O(1) access
+        const tenantCountMap = new Map(tenantCounts.map(r => [r.propertyId, r.count]))
+        const leaseCountMap  = new Map(leaseCounts.map(r => [r.propertyId, r.count]))
+        // Keep only the most recent row per property (first occurrence after DESC sort)
+        const metricsMap = latestMetrics.reduce((acc, row) => {
+          if (!acc.has(row.propertyId)) acc.set(row.propertyId, row)
+          return acc
+        }, new Map<string, typeof latestMetrics[0]>())
+
+        return propertiesData.map(property => ({
+          ...property,
+          tenantCount:  Number(tenantCountMap.get(property.id)) || 0,
+          activeLeases: Number(leaseCountMap.get(property.id))  || 0,
+          metrics: metricsMap.get(property.id)
+            ? {
+                occupancyRate:  metricsMap.get(property.id)!.occupancyRate,
+                collectionRate: metricsMap.get(property.id)!.collectionRate,
+                revenue:        metricsMap.get(property.id)!.revenue,
+                footTraffic:    metricsMap.get(property.id)!.footTraffic,
+              }
+            : null,
+        }))
       },
       CACHE_TTL.MEDIUM // 5 minutes
     )

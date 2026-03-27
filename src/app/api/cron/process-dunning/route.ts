@@ -20,18 +20,10 @@ export const dynamic   = "force-dynamic"  // Never cached
 export const maxDuration = 60             // Up to 60 s for the Vercel Hobby plan
 
 export async function GET(request: NextRequest) {
-  // ── Auth: verify CRON_SECRET ───────────────────────────────────────────────
-  const secret   = process.env.CRON_SECRET
-  const authHeader = request.headers.get("authorization")
-  const token    = authHeader?.replace("Bearer ", "")
-
-  if (!secret || token !== secret) {
-    // Also check Vercel's cron header (NEXT_PUBLIC_VERCEL_URL is set automatically)
-    const isVercelCron = request.headers.get("x-vercel-signature") !== null
-    if (!isVercelCron) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-  }
+  // ── Auth (timing-safe comparison to prevent secret extraction via timing) ──
+  const { guardCronRoute } = await import("@/lib/security/cron-auth")
+  const denied = await guardCronRoute(request)
+  if (denied) return denied
 
   const startedAt = new Date()
 
