@@ -28,8 +28,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
+import { AddEquipmentDialog } from "@/components/equipment/add-equipment-dialog"
+import { usePropertyStore } from "@/stores/property-store"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,6 +60,10 @@ import {
   Zap,
   Wind,
   Bot,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { format, differenceInDays } from "date-fns"
@@ -244,30 +249,21 @@ const demoEquipment: Equipment[] = [
 
 export default function EquipmentPage() {
   const { toast } = useToast()
+  const { properties, selectedProperty, fetchProperties } = usePropertyStore()
   const [equipment, setEquipment] = React.useState<Equipment[]>(demoEquipment)
   const [isLoading, setIsLoading] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog states
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
   const [viewDialogOpen, setViewDialogOpen] = React.useState(false)
   const [selectedEquipment, setSelectedEquipment] = React.useState<Equipment | null>(null)
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
-  // Form state
-  const [formData, setFormData] = React.useState({
-    name: "",
-    type: "",
-    make: "",
-    model: "",
-    serialNumber: "",
-    location: "",
-    installationDate: "",
-    warrantyExpiry: "",
-    maintenanceFrequencyDays: "90",
-  })
+  React.useEffect(() => { fetchProperties() }, [fetchProperties])
 
   const getHealthColor = (score: number) => {
     if (score >= 0.8) return "text-green-600"
@@ -309,6 +305,16 @@ export default function EquipmentPage() {
     return true
   })
 
+  const totalPages = Math.ceil(filteredEquipment.length / pageSize)
+  const paginatedEquipment = filteredEquipment.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, typeFilter])
+
   const stats = {
     total: equipment.length,
     operational: equipment.filter((e) => e.status === "operational").length,
@@ -321,53 +327,45 @@ export default function EquipmentPage() {
     }).length,
   }
 
-  const handleCreateEquipment = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
+  const fetchEquipment = React.useCallback(async () => {
+    setIsLoading(true)
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      
-      const newEquipment: Equipment = {
-        id: crypto.randomUUID(),
-        propertyId: "prop-1",
-        ...formData,
-        maintenanceFrequencyDays: parseInt(formData.maintenanceFrequencyDays) || 90,
-        lastMaintenanceDate: null,
-        nextMaintenanceDate: formData.installationDate,
-        predictedFailureDate: null,
-        predictionConfidence: null,
-        healthScore: 1.0,
-        status: "operational",
-        createdAt: new Date().toISOString(),
+      const params = new URLSearchParams()
+      if (selectedProperty) params.set("propertyId", selectedProperty.id)
+      const res = await fetch(`/api/equipment${params.toString() ? `?${params}` : ""}`)
+      const json = await res.json()
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        const mapped: Equipment[] = json.data.map((e: any) => ({
+          id: e.id,
+          propertyId: e.propertyId || "",
+          name: e.name,
+          type: e.type,
+          make: e.make || null,
+          model: e.model || null,
+          serialNumber: e.serialNumber || null,
+          location: e.location || null,
+          installationDate: e.installationDate || null,
+          warrantyExpiry: e.warrantyExpiry || null,
+          maintenanceFrequencyDays: e.maintenanceFrequencyDays || null,
+          lastMaintenanceDate: e.lastMaintenanceDate || null,
+          nextMaintenanceDate: e.nextMaintenanceDate || null,
+          predictedFailureDate: e.predictedFailureDate || null,
+          predictionConfidence: e.predictionConfidence ? parseFloat(e.predictionConfidence) : null,
+          healthScore: parseFloat(e.healthScore) || 1.0,
+          status: e.status || "operational",
+          createdAt: e.createdAt || new Date().toISOString(),
+        }))
+        setEquipment(mapped)
       }
-      
-      setEquipment((prev) => [newEquipment, ...prev])
-      toast({
-        title: "Success",
-        description: "Equipment added successfully!",
-      })
-      setAddDialogOpen(false)
-      setFormData({
-        name: "",
-        type: "",
-        make: "",
-        model: "",
-        serialNumber: "",
-        location: "",
-        installationDate: "",
-        warrantyExpiry: "",
-        maintenanceFrequencyDays: "90",
-      })
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add equipment. Please try again.",
-        variant: "destructive",
-      })
+      // else keep demoEquipment so the page looks populated
+    } catch (err) {
+      console.error("Failed to fetch equipment:", err)
     } finally {
-      setIsSubmitting(false)
+      setIsLoading(false)
     }
-  }
+  }, [selectedProperty])
+
+  React.useEffect(() => { fetchEquipment() }, [fetchEquipment])
 
   const handleScheduleMaintenance = (id: string) => {
     toast({
@@ -387,158 +385,21 @@ export default function EquipmentPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setIsLoading(true)} disabled={isLoading}>
+          <Button variant="outline" onClick={() => fetchEquipment()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Equipment
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
-              <form onSubmit={handleCreateEquipment}>
-                <DialogHeader>
-                  <DialogTitle>Add New Equipment</DialogTitle>
-                  <DialogDescription>
-                    Register equipment for tracking and maintenance scheduling.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid gap-2">
-                    <label htmlFor="name" className="text-sm font-medium">
-                      Equipment Name *
-                    </label>
-                    <Input
-                      id="name"
-                      placeholder="e.g., Central HVAC Unit #1"
-                      value={formData.name}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label htmlFor="type" className="text-sm font-medium">
-                        Type *
-                      </label>
-                      <Select
-                        value={formData.type}
-                        onValueChange={(value) => setFormData((prev) => ({ ...prev, type: value }))}
-                        required
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="hvac">HVAC</SelectItem>
-                          <SelectItem value="elevator">Elevator</SelectItem>
-                          <SelectItem value="escalator">Escalator</SelectItem>
-                          <SelectItem value="generator">Generator</SelectItem>
-                          <SelectItem value="fire_system">Fire System</SelectItem>
-                          <SelectItem value="ventilation">Ventilation</SelectItem>
-                          <SelectItem value="electrical">Electrical</SelectItem>
-                          <SelectItem value="plumbing">Plumbing</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="location" className="text-sm font-medium">
-                        Location
-                      </label>
-                      <Input
-                        id="location"
-                        placeholder="e.g., Rooftop - Zone A"
-                        value={formData.location}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, location: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label htmlFor="make" className="text-sm font-medium">
-                        Make/Brand
-                      </label>
-                      <Input
-                        id="make"
-                        placeholder="e.g., Carrier"
-                        value={formData.make}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, make: e.target.value }))}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="model" className="text-sm font-medium">
-                        Model
-                      </label>
-                      <Input
-                        id="model"
-                        placeholder="e.g., 30XA 400"
-                        value={formData.model}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, model: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <label htmlFor="serialNumber" className="text-sm font-medium">
-                      Serial Number
-                    </label>
-                    <Input
-                      id="serialNumber"
-                      placeholder="Enter serial number"
-                      value={formData.serialNumber}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, serialNumber: e.target.value }))}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label htmlFor="installationDate" className="text-sm font-medium">
-                        Installation Date
-                      </label>
-                      <Input
-                        id="installationDate"
-                        type="date"
-                        value={formData.installationDate}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, installationDate: e.target.value }))}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="warrantyExpiry" className="text-sm font-medium">
-                        Warranty Expiry
-                      </label>
-                      <Input
-                        id="warrantyExpiry"
-                        type="date"
-                        value={formData.warrantyExpiry}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, warrantyExpiry: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <label htmlFor="maintenanceFrequency" className="text-sm font-medium">
-                      Maintenance Frequency (days)
-                    </label>
-                    <Input
-                      id="maintenanceFrequency"
-                      type="number"
-                      value={formData.maintenanceFrequencyDays}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, maintenanceFrequencyDays: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Add Equipment
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button className="gap-2" onClick={() => setAddDialogOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add Equipment
+          </Button>
+          <AddEquipmentDialog
+            open={addDialogOpen}
+            onOpenChange={setAddDialogOpen}
+            properties={properties}
+            selectedPropertyId={selectedProperty?.id}
+            onSuccess={fetchEquipment}
+          />
         </div>
       </div>
 
@@ -709,7 +570,7 @@ export default function EquipmentPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredEquipment.map((eq) => {
+              {paginatedEquipment.map((eq) => {
                 const type = equipmentTypeConfig[eq.type]
                 const status = statusConfig[eq.status]
                 const maintenanceUrgency = getMaintenanceUrgency(eq.nextMaintenanceDate)
@@ -828,6 +689,44 @@ export default function EquipmentPage() {
               })}
             </TableBody>
           </Table>
+          {filteredEquipment.length > 0 && (
+            <div className="flex items-center justify-between border-t pt-4 mt-4 px-4 pb-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredEquipment.length)} of {filteredEquipment.length}
+                </span>
+                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                  <SelectTrigger className="h-8 w-[70px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span>per page</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-3 text-sm font-medium">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

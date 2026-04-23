@@ -14,6 +14,7 @@
 
 import type { POSProvider, POSSalesRecord, POSProviderConfig } from "../types"
 import { createHmac, timingSafeEqual } from "crypto"
+import { withCircuitBreaker } from "../circuit-breaker"
 
 const POSIST_BASE_URL = "https://api.posist.com/v1"
 const TIMEOUT_MS      = 20_000
@@ -134,35 +135,37 @@ export class POSistProvider implements POSProvider {
   // ── HTTP ──────────────────────────────────────────────────────────────────────
 
   private async request<T>(path: string): Promise<T> {
-    const url = path.startsWith("http") ? path : `${POSIST_BASE_URL}${path}`
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    return withCircuitBreaker("posist", async () => {
+      const url = path.startsWith("http") ? path : `${POSIST_BASE_URL}${path}`
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "X-Api-Key":   this.apiKey,
-          "X-Client-Id": this.clientId,
-          "Accept":      "application/json",
-        },
-        signal: controller.signal,
-      })
-      clearTimeout(timer)
+      try {
+        const res = await fetch(url, {
+          headers: {
+            "X-Api-Key":   this.apiKey,
+            "X-Client-Id": this.clientId,
+            "Accept":      "application/json",
+          },
+          signal: controller.signal,
+        })
+        clearTimeout(timer)
 
-      if (!res.ok) {
-        throw new Error(`POSist API ${res.status}: ${await res.text()}`)
+        if (!res.ok) {
+          throw new Error(`POSist API ${res.status}: ${await res.text()}`)
+        }
+
+        const json = (await res.json()) as POSistApiResponse<T>
+        if (!json.success) throw new Error(`POSist API error: ${JSON.stringify(json)}`)
+        return json.data
+      } catch (err) {
+        clearTimeout(timer)
+        if ((err as Error).name === "AbortError") {
+          throw new Error(`POSist timeout after ${TIMEOUT_MS}ms`)
+        }
+        throw err
       }
-
-      const json = (await res.json()) as POSistApiResponse<T>
-      if (!json.success) throw new Error(`POSist API error: ${JSON.stringify(json)}`)
-      return json.data
-    } catch (err) {
-      clearTimeout(timer)
-      if ((err as Error).name === "AbortError") {
-        throw new Error(`POSist timeout after ${TIMEOUT_MS}ms`)
-      }
-      throw err
-    }
+    })
   }
 }
 

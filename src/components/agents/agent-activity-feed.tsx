@@ -201,8 +201,8 @@ export function AgentActivityFeed({ propertyId }: AgentActivityFeedProps) {
           <div className="flex items-center gap-1 text-xs">
             {isConnected ? (
               <>
-                <Wifi className="h-3 w-3 text-green-500" />
-                <span className="text-green-600">Live</span>
+                <Wifi className="h-3 w-3 text-green-500 dark:text-green-400" />
+                <span className="text-green-600 dark:text-green-400">Live</span>
               </>
             ) : (
               <>

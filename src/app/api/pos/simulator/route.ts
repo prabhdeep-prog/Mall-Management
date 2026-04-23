@@ -1,10 +1,20 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { posIntegrations, tenants, leases, posSalesData } from "@/lib/db/schema"
 import { eq, and, sql } from "drizzle-orm"
+import { requirePermission, PERMISSIONS } from "@/lib/auth/rbac"
+import { writeAuditLog, extractRequestMeta } from "@/lib/audit/log"
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    const session = await auth()
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const { authorized, error: permError } = await requirePermission(PERMISSIONS.POS_VIEW)
+    if (!authorized) return NextResponse.json({ error: permError }, { status: 403 })
+
     const { searchParams } = new URL(request.url)
     const integrationId = searchParams.get("integrationId")
 
@@ -60,8 +70,15 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const session = await auth()
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const { authorized, error: permError } = await requirePermission(PERMISSIONS.POS_WRITE)
+    if (!authorized) return NextResponse.json({ error: permError }, { status: 403 })
+
     const body = await request.json()
     const {
       posIntegrationId,
@@ -184,6 +201,37 @@ export async function POST(request: Request) {
         updatedAt: new Date(),
       })
       .where(eq(posIntegrations.id, posIntegrationId))
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
+    const meta = extractRequestMeta(request)
+    void writeAuditLog({
+      organizationId: session.user.organizationId,
+      action:        "pos.override",
+      entity:        "pos_sales_data",
+      entityId:      posIntegrationId as string,
+      before: existing ? {
+        grossSales:       existing.grossSales,
+        netSales:         existing.netSales,
+        transactionCount: existing.transactionCount,
+        salesDate:        today,
+      } : null,
+      after: {
+        grossSales:       String(Math.round(newGross * 100) / 100),
+        netSales:         String(Math.round(newNet * 100) / 100),
+        transactionCount: newTxnCount,
+        salesDate:        today,
+        addedAmount:      saleAmount,
+        paymentMethod:    paymentMethod ?? null,
+        category:         category ?? null,
+      },
+      changedFields: {
+        grossSales:       { from: existing?.grossSales ?? "0", to: String(Math.round(newGross * 100) / 100) },
+        transactionCount: { from: existing?.transactionCount ?? 0, to: newTxnCount },
+      },
+      userId:    session.user.id,
+      ...meta,
+    })
+    // ── End audit ─────────────────────────────────────────────────────────────
 
     return NextResponse.json({
       success: true,

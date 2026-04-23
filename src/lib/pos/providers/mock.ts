@@ -4,7 +4,13 @@
 // Generates realistic sales data without hitting any real API.
 // Uses the mock data generator for category-aware, pattern-rich data.
 
-import type { POSProvider, POSConnectionConfig, POSSalesRecord, POSConnectionTestResult } from "../types"
+import type {
+  POSProvider,
+  POSProviderConfig,
+  POSProviderKey,
+  POSSalesRecord,
+  POSConnectionTestResult,
+} from "../types"
 import { generateMockSalesData } from "../mock-data-generator"
 
 // Provider-specific Store ID format requirements
@@ -32,81 +38,71 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 }
 
 export class MockPOSProvider implements POSProvider {
-  readonly providerKey = "pine_labs" as const // Default mock provider
+  private config: POSProviderConfig
+  private providerKey: POSProviderKey
 
-  async testConnection(config: POSConnectionConfig): Promise<POSConnectionTestResult> {
+  constructor(config: POSProviderConfig = { apiKey: "mock" }, providerKey: POSProviderKey = "pine_labs") {
+    this.config = config
+    this.providerKey = providerKey
+  }
+
+  async testConnection(): Promise<POSConnectionTestResult> {
     // Simulate realistic network delay (800ms-1.5s)
     await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 700))
 
-    const providerName = PROVIDER_DISPLAY_NAMES[config.provider] || config.provider
-
-    // Validate credentials are present
-    if (!config.storeId || !config.apiKey) {
-      return {
-        success: false,
-        message: "Store ID and API Key are required to establish connection.",
-      }
-    }
-
-    // In demo/mock mode we accept any non-empty credentials.
-    // Real providers would validate format, length, prefixes, etc.
+    const providerName = PROVIDER_DISPLAY_NAMES[this.providerKey] || this.providerKey
 
     // Success — return realistic provider info
     const storeNames: Record<string, string> = {
-      pine_labs: `${providerName} Terminal — ${config.storeId}`,
-      razorpay_pos: `Razorpay POS — ${config.storeId.replace("rzp_store_", "")}`,
-      petpooja: `Petpooja Outlet — ${config.storeId}`,
-      posist: `POSist Restaurant — ${config.storeId}`,
-      shopify: `${config.storeId}.myshopify.com`,
-      square: `Square Location — ${config.storeId}`,
-      lightspeed: `Lightspeed Retail — ${config.storeId}`,
-      vend: `Vend Store — ${config.storeId}`,
+      pine_labs: `${providerName} Terminal — ${this.config.storeId || "DEMO"}`,
+      razorpay_pos: `Razorpay POS — ${(this.config.storeId || "DEMO").replace("rzp_store_", "")}`,
+      petpooja: `Petpooja Outlet — ${this.config.storeId || "DEMO"}`,
+      posist: `POSist Restaurant — ${this.config.storeId || "DEMO"}`,
+      shopify: `${this.config.storeId || "demo"}.myshopify.com`,
+      square: `Square Location — ${this.config.storeId || "DEMO"}`,
+      lightspeed: `Lightspeed Retail — ${this.config.storeId || "DEMO"}`,
+      vend: `Vend Store — ${this.config.storeId || "DEMO"}`,
     }
 
     return {
-      success: true,
-      message: `Successfully connected to ${providerName}. Store verified and ready to sync.`,
-      storeName: storeNames[config.provider] || `${providerName} Store`,
-      lastTransactionDate: new Date().toISOString().split("T")[0],
-      providerVersion: "v2.1.0",
+      ok: true,
     }
   }
 
-  async fetchDailySales(config: POSConnectionConfig, date: string): Promise<POSSalesRecord> {
+  async fetchDailySales(date: Date): Promise<POSSalesRecord> {
     await new Promise((resolve) => setTimeout(resolve, 300))
 
+    const dateStr = date.toISOString().slice(0, 10)
     const records = generateMockSalesData({
-      startDate: date,
-      endDate: date,
-      tenantCategory: (config.additionalConfig?.tenantCategory as string) || "fashion",
-      tenantSeed: hashCode(config.storeId || "default"),
+      startDate: dateStr,
+      endDate: dateStr,
+      tenantCategory: (this.config.extra?.tenantCategory as string) || "fashion",
+      tenantSeed: hashCode(this.config.storeId || "default"),
     })
 
     return records[0]
   }
 
   async fetchSalesRange(
-    config: POSConnectionConfig,
-    startDate: string,
-    endDate: string,
-    tenantCategory?: string
+    startDate: Date,
+    endDate: Date,
   ): Promise<POSSalesRecord[]> {
     await new Promise((resolve) => setTimeout(resolve, 500))
 
     return generateMockSalesData({
-      startDate,
-      endDate,
-      tenantCategory: tenantCategory || (config.additionalConfig?.tenantCategory as string) || "fashion",
-      tenantSeed: hashCode(config.storeId || "default"),
-      anomalyMode: (config.additionalConfig?.anomalyMode as "none" | "underreport" | "flat") || "none",
+      startDate: startDate.toISOString().slice(0, 10),
+      endDate: endDate.toISOString().slice(0, 10),
+      tenantCategory: (this.config.extra?.tenantCategory as string) || "fashion",
+      tenantSeed: hashCode(this.config.storeId || "default"),
+      anomalyMode: (this.config.extra?.anomalyMode as "none" | "underreport" | "flat") || "none",
     })
   }
 
-  async disconnect(): Promise<boolean> {
+  async disconnect(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 200))
-    return true
   }
 }
+
 
 function hashCode(str: string): number {
   let hash = 0

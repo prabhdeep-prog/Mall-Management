@@ -71,6 +71,27 @@ export const PERMISSIONS = {
   COMPLIANCE_CREATE: "compliance:create",
   COMPLIANCE_EDIT: "compliance:edit",
   COMPLIANCE_DELETE: "compliance:delete",
+
+  // CAM permissions
+  CAM_VIEW: "cam:view",
+  CAM_CREATE: "cam:create",
+  CAM_ALLOCATE: "cam:allocate",
+
+  // Import permissions
+  IMPORT_VIEW: "import:view",
+  IMPORT_CREATE: "import:create",
+
+  // Notification template permissions
+  NOTIFICATIONS_MANAGE: "notifications:manage",
+
+  // POS permissions
+  POS_VIEW: "pos:view",
+  POS_WRITE: "pos:write",
+
+  // Onboarding permissions
+  ONBOARDING_VIEW:    "onboarding:view",
+  ONBOARDING_MANAGE:  "onboarding:manage",
+  ONBOARDING_APPROVE: "onboarding:approve",
 } as const
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS]
@@ -125,8 +146,19 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.COMPLIANCE_CREATE,
     PERMISSIONS.COMPLIANCE_EDIT,
     PERMISSIONS.COMPLIANCE_DELETE,
+    PERMISSIONS.CAM_VIEW,
+    PERMISSIONS.CAM_CREATE,
+    PERMISSIONS.CAM_ALLOCATE,
+    PERMISSIONS.IMPORT_VIEW,
+    PERMISSIONS.IMPORT_CREATE,
+    PERMISSIONS.NOTIFICATIONS_MANAGE,
+    PERMISSIONS.POS_VIEW,
+    PERMISSIONS.POS_WRITE,
+    PERMISSIONS.ONBOARDING_VIEW,
+    PERMISSIONS.ONBOARDING_MANAGE,
+    PERMISSIONS.ONBOARDING_APPROVE,
   ],
-  
+
   property_manager: [
     PERMISSIONS.PROPERTIES_VIEW,
     PERMISSIONS.TENANTS_VIEW,
@@ -149,8 +181,12 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.EQUIPMENT_EDIT,
     PERMISSIONS.VENDORS_VIEW,
     PERMISSIONS.COMPLIANCE_VIEW,
+    PERMISSIONS.POS_VIEW,
+    PERMISSIONS.ONBOARDING_VIEW,
+    PERMISSIONS.ONBOARDING_MANAGE,
+    PERMISSIONS.ONBOARDING_APPROVE,
   ],
-  
+
   accountant: [
     PERMISSIONS.TENANTS_VIEW,
     PERMISSIONS.LEASES_VIEW,
@@ -159,8 +195,12 @@ export const ROLE_PERMISSIONS: Record<string, Permission[]> = {
     PERMISSIONS.INVOICES_EDIT,
     PERMISSIONS.ANALYTICS_VIEW,
     PERMISSIONS.ANALYTICS_EXPORT,
+    PERMISSIONS.CAM_VIEW,
+    PERMISSIONS.CAM_CREATE,
+    PERMISSIONS.CAM_ALLOCATE,
+    PERMISSIONS.NOTIFICATIONS_MANAGE,
   ],
-  
+
   maintenance_staff: [
     PERMISSIONS.PROPERTIES_VIEW,
     PERMISSIONS.WORK_ORDERS_VIEW,

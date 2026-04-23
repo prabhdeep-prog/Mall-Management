@@ -5,11 +5,13 @@ import {
   text,
   timestamp,
   integer,
+  smallint,
   decimal,
   boolean,
   jsonb,
   date,
   time,
+  char,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
@@ -27,6 +29,109 @@ export const organizations = pgTable("organizations", {
   settings: jsonb("settings").default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+})
+
+// ============================================================================
+// BILLING
+// ============================================================================
+
+export const billingPlans = pgTable("billing_plans", {
+  id:                      uuid("id").defaultRandom().primaryKey(),
+  slug:                    varchar("slug", { length: 50 }).unique().notNull(),
+  name:                    varchar("name", { length: 100 }).notNull(),
+  description:             text("description"),
+  currency:                char("currency", { length: 3 }).notNull().default("INR"),
+  amountMonthly:           integer("amount_monthly").notNull(),
+  amountYearly:            integer("amount_yearly"),
+  maxProperties:           integer("max_properties"),
+  maxTenants:              integer("max_tenants"),
+  maxUsers:                integer("max_users"),
+  features:                jsonb("features").notNull().default([]),
+  isActive:                boolean("is_active").notNull().default(true),
+  isPublic:                boolean("is_public").notNull().default(true),
+  sortOrder:               smallint("sort_order").notNull().default(0),
+  razorpayPlanIdMonthly:   varchar("razorpay_plan_id_monthly", { length: 100 }),
+  razorpayPlanIdYearly:    varchar("razorpay_plan_id_yearly",  { length: 100 }),
+  stripePriceIdMonthly:    varchar("stripe_price_id_monthly",  { length: 100 }),
+  stripePriceIdYearly:     varchar("stripe_price_id_yearly",   { length: 100 }),
+  createdAt:               timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:               timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const subscriptions = pgTable("subscriptions", {
+  id:                    uuid("id").defaultRandom().primaryKey(),
+  organizationId:        uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  planId:                uuid("plan_id").notNull().references(() => billingPlans.id),
+  provider:              varchar("provider", { length: 20 }).notNull().default("razorpay"),
+  providerSubscriptionId:varchar("provider_subscription_id", { length: 255 }),
+  providerCustomerId:    varchar("provider_customer_id",     { length: 255 }),
+  status:                varchar("status", { length: 30 }).notNull().default("trialing"),
+  billingCycle:          varchar("billing_cycle", { length: 10 }).notNull().default("monthly"),
+  trialEndsAt:           timestamp("trial_ends_at",       { withTimezone: true }),
+  currentPeriodStart:    timestamp("current_period_start", { withTimezone: true }),
+  currentPeriodEnd:      timestamp("current_period_end",   { withTimezone: true }),
+  cancelAt:              timestamp("cancel_at",            { withTimezone: true }),
+  cancelledAt:           timestamp("cancelled_at",         { withTimezone: true }),
+  paymentFailedAt:       timestamp("payment_failed_at",    { withTimezone: true }),
+  paymentFailureCount:   smallint("payment_failure_count").notNull().default(0),
+  nextRetryAt:           timestamp("next_retry_at",        { withTimezone: true }),
+  gracePeriodEndsAt:     timestamp("grace_period_ends_at", { withTimezone: true }),
+  previousPlanId:        uuid("previous_plan_id").references(() => billingPlans.id),
+  planChangedAt:         timestamp("plan_changed_at",      { withTimezone: true }),
+  metadata:              jsonb("metadata").notNull().default({}),
+  createdAt:             timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:             timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdx:    index("idx_subscriptions_org").on(table.organizationId),
+  statusIdx: index("idx_subscriptions_status").on(table.status),
+}))
+
+export const billingEvents = pgTable("billing_events", {
+  id:             uuid("id").defaultRandom().primaryKey(),
+  idempotencyKey: varchar("idempotency_key", { length: 255 }).unique().notNull(),
+  provider:       varchar("provider",   { length: 20  }).notNull(),
+  eventType:      varchar("event_type", { length: 100 }).notNull(),
+  payload:        jsonb("payload").notNull().default({}),
+  organizationId: uuid("organization_id").references(() => organizations.id),
+  subscriptionId: uuid("subscription_id").references(() => subscriptions.id),
+  status:         varchar("status", { length: 20 }).notNull().default("pending"),
+  errorDetail:    text("error_detail"),
+  processedAt:    timestamp("processed_at", { withTimezone: true }),
+  createdAt:      timestamp("created_at",   { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdx:    index("idx_billing_events_org").on(table.organizationId),
+  statusIdx: index("idx_billing_events_status").on(table.status),
+}))
+
+export const dunningAttempts = pgTable("dunning_attempts", {
+  id:             uuid("id").defaultRandom().primaryKey(),
+  subscriptionId: uuid("subscription_id").notNull().references(() => subscriptions.id, { onDelete: "cascade" }),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  attemptNumber:  smallint("attempt_number").notNull(),
+  attemptType:    varchar("attempt_type", { length: 30 }).notNull(),
+  scheduledAt:    timestamp("scheduled_at",  { withTimezone: true }).notNull(),
+  executedAt:     timestamp("executed_at",   { withTimezone: true }),
+  status:         varchar("status", { length: 20 }).notNull().default("scheduled"),
+  result:         jsonb("result"),
+  createdAt:      timestamp("created_at",    { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  scheduledIdx: index("idx_dunning_scheduled").on(table.scheduledAt, table.status),
+}))
+
+export const mrrSnapshots = pgTable("mrr_snapshots", {
+  id:              uuid("id").defaultRandom().primaryKey(),
+  snapshotDate:    date("snapshot_date").notNull().unique(),
+  currency:        char("currency", { length: 3 }).notNull().default("INR"),
+  mrrPaise:        integer("mrr_paise").notNull().default(0),
+  arrPaise:        integer("arr_paise").notNull().default(0),
+  activeCount:     integer("active_count").notNull().default(0),
+  trialingCount:   integer("trialing_count").notNull().default(0),
+  newCount:        integer("new_count").notNull().default(0),
+  churnedCount:    integer("churned_count").notNull().default(0),
+  upgradedCount:   integer("upgraded_count").notNull().default(0),
+  downgradedCount: integer("downgraded_count").notNull().default(0),
+  planBreakdown:   jsonb("plan_breakdown").notNull().default({}),
+  createdAt:       timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 })
 
 export const properties = pgTable("properties", {
@@ -61,9 +166,10 @@ export const properties = pgTable("properties", {
 
 export const tenants = pgTable("tenants", {
   id: uuid("id").defaultRandom().primaryKey(),
-  propertyId: uuid("property_id").references(() => properties.id, { onDelete: "cascade" }),
+  propertyId: uuid("property_id").references(() => properties.id, { onDelete: "restrict" }),
   businessName: varchar("business_name", { length: 255 }).notNull(),
   legalEntityName: varchar("legal_entity_name", { length: 255 }),
+  brandName: varchar("brand_name", { length: 255 }),
   category: varchar("category", { length: 100 }), // 'fashion', 'electronics', 'food', 'entertainment'
   subcategory: varchar("subcategory", { length: 100 }),
   contactPerson: varchar("contact_person", { length: 255 }),
@@ -74,6 +180,14 @@ export const tenants = pgTable("tenants", {
   pan: varchar("pan", { length: 20 }),
   tradeLicense: varchar("trade_license", { length: 100 }),
   status: varchar("status", { length: 50 }).default("active"), // active, inactive, suspended
+  // ── Onboarding lifecycle ────────────────────────────────────────────────────
+  onboardingStatus: varchar("onboarding_status", { length: 50 }).default("LEAD_CREATED"),
+  // LEAD_CREATED | DOCUMENTS_PENDING | LEASE_PENDING | APPROVAL_PENDING | SETUP_PENDING | GO_LIVE_READY | ACTIVE
+  onboardingStartedAt: timestamp("onboarding_started_at"),
+  onboardingCompletedAt: timestamp("onboarding_completed_at"),
+  targetOpeningDate: date("target_opening_date"),
+  emergencyContact: jsonb("emergency_contact").default({}),
+  // ── Scoring ─────────────────────────────────────────────────────────────────
   sentimentScore: decimal("sentiment_score", { precision: 3, scale: 2 }), // -1 to 1, calculated by agent
   riskScore: decimal("risk_score", { precision: 3, scale: 2 }), // 0 to 1, payment risk
   satisfactionScore: decimal("satisfaction_score", { precision: 3, scale: 2 }), // 0 to 5, from surveys
@@ -83,6 +197,33 @@ export const tenants = pgTable("tenants", {
 }, (table) => ({
   propertyIdx: index("idx_tenants_property").on(table.propertyId),
   statusIdx: index("idx_tenants_status").on(table.status),
+  onboardingStatusIdx: index("idx_tenants_onboarding_status").on(table.onboardingStatus),
+}))
+
+export const tenantSatisfaction = pgTable("tenant_satisfaction", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  score: integer("score").notNull(), // 0-100
+  level: varchar("level", { length: 20 }).notNull(), // high, medium, low
+  breakdown: jsonb("breakdown").default({}).notNull(), // { payment, maintenance, complaints, renewal }
+  calculatedAt: timestamp("calculated_at").defaultNow().notNull(),
+  source: varchar("source", { length: 50 }).default("calculated").notNull(),
+}, (table) => ({
+  tenantIdx: index("idx_tenant_satisfaction_tenant").on(table.tenantId),
+  calculatedAtIdx: index("idx_tenant_satisfaction_calculated_at").on(table.calculatedAt),
+}))
+
+export const tenantSentiment = pgTable("tenant_sentiment", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  sentiment: varchar("sentiment", { length: 20 }).notNull(), // positive, neutral, negative
+  score: decimal("score", { precision: 4, scale: 3 }).notNull(), // -1.000 to 1.000
+  source: varchar("source", { length: 50 }).notNull(), // email, note, call, chat
+  content: text("content"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index("idx_tenant_sentiment_tenant").on(table.tenantId),
+  createdAtIdx: index("idx_tenant_sentiment_created_at").on(table.createdAt),
 }))
 
 export const leases = pgTable("leases", {
@@ -139,6 +280,7 @@ export const invoices = pgTable("invoices", {
   totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
   dueDate: date("due_date").notNull(),
   status: varchar("status", { length: 50 }).default("pending"), // pending, paid, overdue, cancelled
+  lifecycleStatus: varchar("lifecycle_status", { length: 20 }).default("draft").notNull(), // draft | posted | cancelled
   paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }).default("0"),
   paidDate: date("paid_date"),
   paymentMethod: varchar("payment_method", { length: 50 }),
@@ -455,6 +597,58 @@ export const posIntegrations = pgTable("pos_integrations", {
   statusIdx: index("idx_pos_integrations_status").on(table.status),
 }))
 
+export const posTransactions = pgTable("pos_transactions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  externalId: text("external_id").notNull(),
+  posIntegrationId: uuid("pos_integration_id").references(() => posIntegrations.id),
+  tenantId: uuid("tenant_id").references(() => tenants.id),
+  propertyId: uuid("property_id").references(() => properties.id),
+  organizationId: uuid("organization_id").references(() => organizations.id),
+
+  grossAmount: decimal("gross_amount", { precision: 12, scale: 2 }).notNull(),
+  netAmount: decimal("net_amount", { precision: 12, scale: 2 }).notNull(),
+  discountAmount: decimal("discount_amount", { precision: 12, scale: 2 }).default("0"),
+  taxAmount: decimal("tax_amount", { precision: 12, scale: 2 }).default("0"),
+  refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }).default("0"),
+
+  transactionType: text("transaction_type").notNull(), // 'sale', 'refund', 'void', 'partial_payment'
+  paymentMethod: text("payment_method"), // 'card', 'upi', 'cash', 'wallet', 'mixed'
+  status: text("status").notNull(), // 'completed', 'refunded', 'voided', 'pending'
+  currency: varchar("currency", { length: 3 }).default("INR"),
+
+  terminalId: text("terminal_id"),
+  merchantId: text("merchant_id"),
+  operatorId: text("operator_id"),
+
+  lineItems: jsonb("line_items").default([]),
+  rawPayload: jsonb("raw_payload"),
+
+  transactedAt: timestamp("transacted_at", { withTimezone: true }).notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  dedupIdx: uniqueIndex("pos_transactions_dedup").on(table.posIntegrationId, table.externalId),
+  tenantDateIdx: index("idx_pos_txn_tenant_date").on(table.tenantId, table.transactedAt),
+  paymentMethodIdx: index("idx_pos_txn_payment_method").on(table.paymentMethod),
+}))
+
+export const posReconciliation = pgTable("pos_reconciliation", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").references(() => tenants.id),
+  leaseId: uuid("lease_id").references(() => leases.id),
+  organizationId: uuid("organization_id").references(() => organizations.id),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  posTotal: decimal("pos_total", { precision: 12, scale: 2 }).notNull(),
+  invoiceTotal: decimal("invoice_total", { precision: 12, scale: 2 }).notNull(),
+  variance: decimal("variance", { precision: 12, scale: 2 }).notNull(),
+  status: text("status").notNull(), // 'matched', 'variance_detected', 'resolved', 'pending'
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  tenantPeriodIdx: index("idx_pos_recon_tenant_period").on(table.tenantId, table.periodStart, table.periodEnd),
+  statusIdx: index("idx_pos_recon_status").on(table.status),
+}))
+
 export const posSalesData = pgTable("pos_sales_data", {
   id: uuid("id").defaultRandom().primaryKey(),
   posIntegrationId: uuid("pos_integration_id").references(() => posIntegrations.id, { onDelete: "cascade" }),
@@ -536,6 +730,349 @@ export const dailyMetrics = pgTable("daily_metrics", {
 }))
 
 // ============================================================================
+// ADMIN ACCESS LOG & PROVISIONING (migration 003)
+// ============================================================================
+
+export const adminAccessLog = pgTable("admin_access_log", {
+  id:             uuid("id").defaultRandom().primaryKey(),
+  adminUserId:    uuid("admin_user_id").notNull(),
+  adminEmail:     text("admin_email").notNull(),
+  targetOrgId:    uuid("target_org_id").notNull().references(() => organizations.id),
+  targetOrgName:  text("target_org_name"),
+  reason:         text("reason").notNull(),
+  ticketRef:      text("ticket_ref"),
+  grantedAt:      timestamp("granted_at", { withTimezone: true }).defaultNow().notNull(),
+  revokedAt:      timestamp("revoked_at", { withTimezone: true }),
+  requestIp:      text("request_ip"),
+  userAgent:      text("user_agent"),
+  sessionId:      text("session_id"),
+})
+
+export const provisioningEvents = pgTable("provisioning_events", {
+  id:               uuid("id").defaultRandom().primaryKey(),
+  idempotencyKey:   uuid("idempotency_key").unique().notNull(),
+  organizationId:   uuid("organization_id"),
+  step:             varchar("step", { length: 50 }).notNull(),
+  status:           varchar("status", { length: 20 }).notNull().default("started"),
+  errorDetail:      text("error_detail"),
+  metadata:         jsonb("metadata").notNull().default({}),
+  createdAt:        timestamp("created_at",   { withTimezone: true }).defaultNow().notNull(),
+  completedAt:      timestamp("completed_at", { withTimezone: true }),
+})
+
+// ============================================================================
+// REVENUE INTELLIGENCE TABLES (migration 005)
+// ============================================================================
+
+export const revenueCalculations = pgTable("revenue_calculations", {
+  id:                 uuid("id").defaultRandom().primaryKey(),
+  organizationId:     uuid("organization_id").notNull().references(() => organizations.id),
+  tenantId:           uuid("tenant_id").notNull().references(() => tenants.id),
+  leaseId:            uuid("lease_id").notNull().references(() => leases.id),
+  periodStart:        date("period_start").notNull(),
+  periodEnd:          date("period_end").notNull(),
+  // period_days is a GENERATED ALWAYS AS (period_end - period_start + 1) STORED column — omitted here
+  grossSales:         decimal("gross_sales",        { precision: 14, scale: 2 }).notNull(),
+  netSales:           decimal("net_sales",          { precision: 14, scale: 2 }).notNull(),
+  totalRefunds:       decimal("total_refunds",      { precision: 14, scale: 2 }).notNull().default("0"),
+  totalDiscounts:     decimal("total_discounts",    { precision: 14, scale: 2 }).notNull().default("0"),
+  transactionCount:   integer("transaction_count").notNull().default(0),
+  leaseRevSharePct:   decimal("lease_rev_share_pct",{ precision: 6, scale: 4 }).notNull(),
+  leaseMonthlyMg:     decimal("lease_monthly_mg",   { precision: 14, scale: 2 }).notNull(),
+  leaseBreakpoint:    decimal("lease_breakpoint",   { precision: 14, scale: 2 }),
+  leaseAreaSqft:      decimal("lease_area_sqft",    { precision: 10, scale: 2 }),
+  minimumGuarantee:   decimal("minimum_guarantee",  { precision: 14, scale: 2 }).notNull(),
+  revShareBase:       decimal("rev_share_base",     { precision: 14, scale: 2 }).notNull(),
+  revShareAmount:     decimal("rev_share_amount",   { precision: 14, scale: 2 }).notNull(),
+  amountDue:          decimal("amount_due",         { precision: 14, scale: 2 }).notNull(),
+  excessOverMg:       decimal("excess_over_mg",     { precision: 14, scale: 2 }).notNull(),
+  metadata:           jsonb("metadata").default({}),
+  createdAt:          timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdx:    index("idx_rev_calc_org").on(table.organizationId),
+  tenantIdx: index("idx_rev_calc_tenant").on(table.tenantId),
+  leaseIdx:  index("idx_rev_calc_lease").on(table.leaseId),
+}))
+
+export const revenueAdjustments = pgTable("revenue_adjustments", {
+  id:                uuid("id").defaultRandom().primaryKey(),
+  organizationId:    uuid("organization_id").notNull().references(() => organizations.id),
+  tenantId:          uuid("tenant_id").notNull().references(() => tenants.id),
+  revenueCalcId:     uuid("revenue_calc_id").references(() => revenueCalculations.id),
+  adjustmentType:    text("adjustment_type").notNull(),
+  amount:            decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  reason:            text("reason").notNull(),
+  evidenceUrls:      text("evidence_urls").array(),
+  status:            text("status").notNull().default("pending"),
+  requestedBy:       uuid("requested_by").notNull().references(() => users.id),
+  requestedAt:       timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+  reviewedBy:        uuid("reviewed_by").references(() => users.id),
+  reviewedAt:        timestamp("reviewed_at",  { withTimezone: true }),
+  reviewNotes:       text("review_notes"),
+  posTransactionId:  uuid("pos_transaction_id").references(() => posTransactions.id),
+}, (table) => ({
+  calcIdx:      index("idx_adjustments_calc").on(table.revenueCalcId),
+  orgStatusIdx: index("idx_adjustments_org_status").on(table.organizationId, table.status),
+}))
+
+export const tenantRiskScores = pgTable("tenant_risk_scores", {
+  id:                 uuid("id").defaultRandom().primaryKey(),
+  organizationId:     uuid("organization_id").notNull().references(() => organizations.id),
+  tenantId:           uuid("tenant_id").notNull().references(() => tenants.id),
+  scoreDate:          date("score_date").notNull(),
+  riskScore:          integer("risk_score").notNull(), // 0..100
+  riskLevel:          varchar("risk_level", { length: 16 }).notNull(), // low|medium|high|critical
+  // Per-signal contributions (transparency for the dashboard)
+  latePaymentPoints:  integer("late_payment_points").notNull().default(0),
+  salesDropPoints:    integer("sales_drop_points").notNull().default(0),
+  complaintPoints:    integer("complaint_points").notNull().default(0),
+  leaseExpiryPoints:  integer("lease_expiry_points").notNull().default(0),
+  signals:            jsonb("signals").default({}),         // raw counts/values
+  recommendedActions: jsonb("recommended_actions").default([]), // ["offer_discount", ...]
+  modelVersion:       varchar("model_version", { length: 32 }).notNull(),
+  createdAt:          timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgTenantDateIdx: index("idx_risk_org_tenant_date").on(table.organizationId, table.tenantId, table.scoreDate),
+  orgLevelIdx:      index("idx_risk_org_level").on(table.organizationId, table.riskLevel),
+  uniqueDaily:      uniqueIndex("uq_risk_tenant_day").on(table.tenantId, table.scoreDate),
+}))
+
+export const revenueForecasts = pgTable("revenue_forecasts", {
+  id:               uuid("id").defaultRandom().primaryKey(),
+  organizationId:   uuid("organization_id").notNull().references(() => organizations.id),
+  propertyId:       uuid("property_id").notNull().references(() => properties.id),
+  zoneId:           uuid("zone_id"),
+  forecastDate:     date("forecast_date").notNull(),
+  predictedRevenue: decimal("predicted_revenue", { precision: 14, scale: 2 }).notNull(),
+  confidenceScore: decimal("confidence_score",  { precision: 4,  scale: 3 }).notNull(),
+  modelVersion:     varchar("model_version", { length: 32 }).notNull(),
+  createdAt:        timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgPropDateIdx: index("idx_rev_forecast_org_prop_date").on(table.organizationId, table.propertyId, table.forecastDate),
+  uniqueForecast: uniqueIndex("uq_rev_forecast_scope_date_version").on(
+    table.organizationId, table.propertyId, table.zoneId, table.forecastDate, table.modelVersion,
+  ),
+}))
+
+export const footfallData = pgTable("footfall_data", {
+  id:                uuid("id").defaultRandom().primaryKey(),
+  organizationId:    uuid("organization_id").notNull().references(() => organizations.id),
+  dataDate:          date("data_date").notNull(),
+  zone:              text("zone"),
+  floor:             text("floor"),
+  visitorCount:      integer("visitor_count").notNull(),
+  peakHour:          integer("peak_hour"),
+  avgDwellMinutes:   integer("avg_dwell_minutes"),
+  source:            text("source").notNull().default("manual"),
+  createdAt:         timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  dedupIdx: uniqueIndex("footfall_date_zone_unique").on(table.organizationId, table.dataDate, table.zone, table.floor),
+}))
+
+export const revenueAuditLog = pgTable("revenue_audit_log", {
+  id:             integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  organizationId: uuid("organization_id").notNull(),
+  entityType:     text("entity_type").notNull(),
+  entityId:       uuid("entity_id").notNull(),
+  action:         text("action").notNull(),
+  actorId:        uuid("actor_id"),
+  actorRole:      text("actor_role"),
+  oldValues:      jsonb("old_values"),
+  newValues:      jsonb("new_values"),
+  ipAddress:      text("ip_address"),
+  userAgent:      text("user_agent"),
+  occurredAt:     timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  entityIdx:  index("idx_revenue_audit_entity").on(table.entityType, table.entityId),
+  orgTimeIdx: index("idx_revenue_audit_org_time").on(table.organizationId, table.occurredAt),
+}))
+
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
+
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  action: text("action").notNull(),        // e.g. invoice.update, payment.create, lease.create, pos.override
+  entity: text("entity").notNull(),        // e.g. invoice, payment, lease, pos_sales_data
+  entityId: text("entity_id").notNull(),
+  before: jsonb("before_data"),            // full snapshot before change
+  after: jsonb("after_data"),              // full snapshot after change
+  changedFields: jsonb("changed_fields"),  // compact diff { field: { from, to } }
+  userId: text("user_id"),                 // session.user.id of the actor
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  orgIdx:        index("idx_audit_logs_org").on(table.organizationId),
+  entityIdx:     index("idx_audit_logs_entity").on(table.entity, table.entityId),
+  createdIdx:    index("idx_audit_logs_created").on(table.createdAt),
+  orgCreatedIdx: index("idx_audit_logs_org_created").on(table.organizationId, table.createdAt),
+  actionIdx:     index("idx_audit_logs_action").on(table.action),
+  userIdx:       index("idx_audit_logs_user").on(table.userId),
+}))
+
+// ============================================================================
+// NOTIFICATION TEMPLATES
+// ============================================================================
+
+export const notificationTemplates = pgTable("notification_templates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  name: text("name").notNull(),
+  channel: text("channel").notNull(), // email, whatsapp, sms
+  eventType: text("event_type").notNull(), // invoice_created, payment_due, lease_expiry, cam_generated
+  subject: text("subject"), // email only
+  body: text("body").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+}, (table) => ({
+  orgIdx: index("idx_notif_tpl_org").on(table.organizationId),
+  eventTypeIdx: index("idx_notif_tpl_event_type").on(table.eventType),
+  channelIdx: index("idx_notif_tpl_channel").on(table.channel),
+}))
+
+// ============================================================================
+// IMPORT JOBS
+// ============================================================================
+
+export const importJobs = pgTable("import_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  type: text("type").notNull(), // tenants, leases, vendors, sales
+  fileName: text("file_name").notNull(),
+  status: text("status").notNull().default("pending"), // pending, processing, completed, failed
+  totalRows: integer("total_rows").notNull().default(0),
+  processedRows: integer("processed_rows").notNull().default(0),
+  errorRows: integer("error_rows").notNull().default(0),
+  errorLog: jsonb("error_log").notNull().default([]),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+}, (table) => ({
+  orgIdx: index("idx_import_jobs_org").on(table.organizationId),
+  statusIdx: index("idx_import_jobs_status").on(table.status),
+}))
+
+// ============================================================================
+// CAM (Common Area Maintenance)
+// ============================================================================
+
+export const camCharges = pgTable("cam_charges", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").notNull().references(() => organizations.id),
+  propertyId: uuid("property_id").notNull().references(() => properties.id, { onDelete: "cascade" }),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  category: text("category").notNull(), // electricity, housekeeping, security, shared_utilities
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull(),
+  allocationMethod: text("allocation_method").notNull().default("per_sqft"), // per_sqft, equal, footfall
+  status: text("status").notNull().default("draft"), // draft, allocated, invoiced
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }),
+}, (table) => ({
+  orgIdx: index("idx_cam_charges_org").on(table.organizationId),
+  propertyIdx: index("idx_cam_charges_property").on(table.propertyId),
+  periodIdx: index("idx_cam_charges_period").on(table.periodStart, table.periodEnd),
+  statusIdx: index("idx_cam_charges_status").on(table.status),
+}))
+
+export const camAllocations = pgTable("cam_allocations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  chargeId: uuid("charge_id").notNull().references(() => camCharges.id, { onDelete: "cascade" }),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  leaseId: uuid("lease_id").references(() => leases.id, { onDelete: "set null" }),
+  ratio: decimal("ratio", { precision: 8, scale: 4 }).notNull(),
+  allocatedAmount: decimal("allocated_amount", { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  chargeIdx: index("idx_cam_alloc_charge").on(table.chargeId),
+  tenantIdx: index("idx_cam_alloc_tenant").on(table.tenantId),
+}))
+
+export const tenantFootfall = pgTable("tenant_footfall", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  footfall: integer("footfall").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  dedupIdx: uniqueIndex("idx_tenant_footfall_dedup").on(table.tenantId, table.date),
+}))
+
+// ============================================================================
+// DOCUMENTS
+// ============================================================================
+
+export const documents = pgTable("documents", {
+  id:             uuid("id").defaultRandom().primaryKey(),
+  organizationId: uuid("organization_id").references(() => organizations.id),
+  tenantId:       uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
+  propertyId:     uuid("property_id").references(() => properties.id, { onDelete: "cascade" }),
+  leaseId:        uuid("lease_id").references(() => leases.id, { onDelete: "set null" }),
+  vendorId:       uuid("vendor_id").references(() => vendors.id),
+
+  name:           varchar("name", { length: 255 }).notNull(),
+  type:           varchar("type", { length: 100 }),                 // legacy column from migration 008
+  documentType:   text("document_type").notNull().default("other"), // lease, compliance, insurance, vendor_contract, property_doc, tenant_doc
+  category:       varchar("category", { length: 100 }).notNull().default("other"),
+  description:    text("description"),
+
+  fileUrl:        text("url").notNull(),
+  fileKey:        text("file_key"),
+  mimeType:       varchar("mime_type", { length: 100 }),
+  fileSize:       integer("file_size"),
+
+  version:        integer("version").notNull().default(1),
+  isActive:       boolean("is_active").notNull().default(true),
+  tags:           jsonb("tags").default([]),
+
+  expiresAt:      timestamp("expires_at", { withTimezone: true }), // legacy from migration 008
+  uploadedBy:     uuid("uploaded_by"),
+  metadata:       jsonb("metadata").default({}),
+  createdAt:      timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:      timestamp("updated_at", { withTimezone: true }),
+}, (table) => ({
+  orgIdx:          index("idx_documents_org").on(table.organizationId),
+  tenantIdx:       index("idx_documents_tenant").on(table.tenantId),
+  propertyIdx:     index("idx_documents_property").on(table.propertyId),
+  categoryIdx:     index("idx_documents_category").on(table.category),
+  documentTypeIdx: index("idx_documents_document_type").on(table.documentType),
+  vendorIdx:       index("idx_documents_vendor").on(table.vendorId),
+}))
+
+// ============================================================================
+// TENANT PORTAL — separate credential namespace from internal users
+// ============================================================================
+
+export const tenantUsers = pgTable("tenant_users", {
+  id:           uuid("id").defaultRandom().primaryKey(),
+  tenantId:     uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  email:        text("email").unique().notNull(),
+  passwordHash: text("password_hash").notNull(),
+  name:         text("name"),
+  isActive:     boolean("is_active").default(true).notNull(),
+  lastLoginAt:  timestamp("last_login_at", { withTimezone: true }),
+  createdAt:    timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index("idx_tenant_users_tenant").on(table.tenantId),
+}))
+
+export const tenantSessions = pgTable("tenant_sessions", {
+  id:            uuid("id").defaultRandom().primaryKey(),
+  tenantUserId:  uuid("tenant_user_id").notNull().references(() => tenantUsers.id, { onDelete: "cascade" }),
+  expiresAt:     timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt:     timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userIdx:    index("idx_tenant_sessions_user").on(table.tenantUserId),
+  expiryIdx:  index("idx_tenant_sessions_expiry").on(table.expiresAt),
+}))
+
+// ============================================================================
 // USERS & RBAC
 // ============================================================================
 
@@ -600,6 +1137,86 @@ export const tenantsRelations = relations(tenants, ({ one, many }) => ({
   conversations: many(conversations),
   posIntegrations: many(posIntegrations),
   posSalesData: many(posSalesData),
+  tenantUsers: many(tenantUsers),
+  documents: many(documents),
+}))
+
+export const documentsRelations = relations(documents, ({ one }) => ({
+  tenant: one(tenants, {
+    fields: [documents.tenantId],
+    references: [tenants.id],
+  }),
+  property: one(properties, {
+    fields: [documents.propertyId],
+    references: [properties.id],
+  }),
+  lease: one(leases, {
+    fields: [documents.leaseId],
+    references: [leases.id],
+  }),
+}))
+
+export const notificationTemplatesRelations = relations(notificationTemplates, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [notificationTemplates.organizationId],
+    references: [organizations.id],
+  }),
+}))
+
+export const importJobsRelations = relations(importJobs, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [importJobs.organizationId],
+    references: [organizations.id],
+  }),
+}))
+
+export const camChargesRelations = relations(camCharges, ({ one, many }) => ({
+  property: one(properties, {
+    fields: [camCharges.propertyId],
+    references: [properties.id],
+  }),
+  organization: one(organizations, {
+    fields: [camCharges.organizationId],
+    references: [organizations.id],
+  }),
+  allocations: many(camAllocations),
+}))
+
+export const camAllocationsRelations = relations(camAllocations, ({ one }) => ({
+  charge: one(camCharges, {
+    fields: [camAllocations.chargeId],
+    references: [camCharges.id],
+  }),
+  tenant: one(tenants, {
+    fields: [camAllocations.tenantId],
+    references: [tenants.id],
+  }),
+  lease: one(leases, {
+    fields: [camAllocations.leaseId],
+    references: [leases.id],
+  }),
+}))
+
+export const tenantFootfallRelations = relations(tenantFootfall, ({ one }) => ({
+  tenant: one(tenants, {
+    fields: [tenantFootfall.tenantId],
+    references: [tenants.id],
+  }),
+}))
+
+export const tenantUsersRelations = relations(tenantUsers, ({ one, many }) => ({
+  tenant: one(tenants, {
+    fields: [tenantUsers.tenantId],
+    references: [tenants.id],
+  }),
+  sessions: many(tenantSessions),
+}))
+
+export const tenantSessionsRelations = relations(tenantSessions, ({ one }) => ({
+  tenantUser: one(tenantUsers, {
+    fields: [tenantSessions.tenantUserId],
+    references: [tenantUsers.id],
+  }),
 }))
 
 export const leasesRelations = relations(leases, ({ one, many }) => ({
@@ -738,4 +1355,115 @@ export type PosIntegration = typeof posIntegrations.$inferSelect
 export type NewPosIntegration = typeof posIntegrations.$inferInsert
 export type PosSalesData = typeof posSalesData.$inferSelect
 export type NewPosSalesData = typeof posSalesData.$inferInsert
+export type TenantUser = typeof tenantUsers.$inferSelect
+export type NewTenantUser = typeof tenantUsers.$inferInsert
+export type TenantSession = typeof tenantSessions.$inferSelect
+export type NewTenantSession = typeof tenantSessions.$inferInsert
+export type AuditLog = typeof auditLogs.$inferSelect
+export type NewAuditLog = typeof auditLogs.$inferInsert
+export type NotificationTemplate = typeof notificationTemplates.$inferSelect
+export type NewNotificationTemplate = typeof notificationTemplates.$inferInsert
+export type ImportJob = typeof importJobs.$inferSelect
+export type NewImportJob = typeof importJobs.$inferInsert
+export type CamCharge = typeof camCharges.$inferSelect
+export type NewCamCharge = typeof camCharges.$inferInsert
+export type CamAllocation = typeof camAllocations.$inferSelect
+export type NewCamAllocation = typeof camAllocations.$inferInsert
+export type TenantFootfall = typeof tenantFootfall.$inferSelect
+export type NewTenantFootfall = typeof tenantFootfall.$inferInsert
+
+// ============================================================================
+// TENANT ONBOARDING
+// ============================================================================
+
+export const tenantOnboardingChecklist = pgTable("tenant_onboarding_checklist", {
+  id:          uuid("id").defaultRandom().primaryKey(),
+  tenantId:    uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  item:        varchar("item", { length: 100 }).notNull(),   // machine key
+  label:       varchar("label", { length: 255 }).notNull(),  // human label
+  required:    boolean("required").default(true).notNull(),
+  completed:   boolean("completed").default(false).notNull(),
+  completedAt: timestamp("completed_at"),
+  completedBy: uuid("completed_by"),
+  documentId:  uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+  metadata:    jsonb("metadata").default({}),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+  updatedAt:   timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index("idx_ob_checklist_tenant").on(table.tenantId),
+}))
+
+export const tenantOnboardingApprovals = pgTable("tenant_onboarding_approvals", {
+  id:           uuid("id").defaultRandom().primaryKey(),
+  tenantId:     uuid("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+  approverRole: varchar("approver_role", { length: 100 }).notNull(),
+  // 'leasing_manager' | 'finance_manager' | 'operations_manager'
+  status:       varchar("status", { length: 50 }).default("pending").notNull(),
+  // pending | approved | rejected
+  approvedBy:   uuid("approved_by"),
+  approvedAt:   timestamp("approved_at"),
+  comments:     text("comments"),
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx:  index("idx_ob_approvals_tenant").on(table.tenantId),
+  uniqueIdx:  uniqueIndex("idx_ob_approvals_unique").on(table.tenantId, table.approverRole),
+}))
+
+export const tenantOnboardingChecklistRelations = relations(tenantOnboardingChecklist, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantOnboardingChecklist.tenantId], references: [tenants.id] }),
+}))
+
+export const tenantOnboardingApprovalsRelations = relations(tenantOnboardingApprovals, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantOnboardingApprovals.tenantId], references: [tenants.id] }),
+}))
+
+export type TenantOnboardingChecklist    = typeof tenantOnboardingChecklist.$inferSelect
+export type NewTenantOnboardingChecklist = typeof tenantOnboardingChecklist.$inferInsert
+export type TenantOnboardingApproval     = typeof tenantOnboardingApprovals.$inferSelect
+export type NewTenantOnboardingApproval  = typeof tenantOnboardingApprovals.$inferInsert
+
+// ============================================================================
+// SMART TENANT ONBOARDING
+// ============================================================================
+
+export const tenantOnboarding = pgTable("tenant_onboarding", {
+  id:               uuid("id").defaultRandom().primaryKey(),
+  tenantId:         uuid("tenant_id").notNull().unique().references(() => tenants.id, { onDelete: "cascade" }),
+  kycCompleted:     boolean("kyc_completed").notNull().default(false),
+  leaseSigned:      boolean("lease_signed").notNull().default(false),
+  depositPaid:      boolean("deposit_paid").notNull().default(false),
+  posConnected:     boolean("pos_connected").notNull().default(false),
+  storeOpeningDate: timestamp("store_opening_date", { withTimezone: true }),
+  completedAt:      timestamp("completed_at", { withTimezone: true }),
+  createdAt:        timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:        timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const tenantDocuments = pgTable("tenant_documents", {
+  id:         uuid("id").defaultRandom().primaryKey(),
+  tenantId:   uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  type:       varchar("type", { length: 20 }).notNull(), // GST, PAN, AGREEMENT, LOGO, OTHER
+  status:     varchar("status", { length: 20 }).notNull().default("pending"), // pending, uploaded, verified
+  fileUrl:    text("file_url"),
+  uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx:     index("idx_tenant_documents_tenant").on(table.tenantId),
+  uniqueTypeIdx: uniqueIndex("uq_tenant_doc_type").on(table.tenantId, table.type),
+}))
+
+export const tenantOnboardingRelations = relations(tenantOnboarding, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantOnboarding.tenantId], references: [tenants.id] }),
+}))
+
+export const tenantDocumentsRelations = relations(tenantDocuments, ({ one }) => ({
+  tenant: one(tenants, { fields: [tenantDocuments.tenantId], references: [tenants.id] }),
+}))
+
+export type TenantOnboarding     = typeof tenantOnboarding.$inferSelect
+export type NewTenantOnboarding  = typeof tenantOnboarding.$inferInsert
+export type TenantDocument       = typeof tenantDocuments.$inferSelect
+export type NewTenantDocument    = typeof tenantDocuments.$inferInsert
 

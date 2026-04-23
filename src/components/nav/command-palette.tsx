@@ -440,9 +440,6 @@ export function CommandPalette() {
               AI mode
             </span>
           )}
-          <kbd className="hidden rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-            Esc
-          </kbd>
         </div>
 
         {/* ── Results ───────────────────────────────────────────────────── */}

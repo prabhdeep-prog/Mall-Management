@@ -347,6 +347,85 @@ export const getLeaseRenewalOptionsTool: Tool = {
   },
 }
 
+// ─── Risk-prediction tools ──────────────────────────────────────────────────
+// These two tools let the Tenant Relations Agent compute a tenant's composite
+// risk score (0..100) and translate it into recommended next actions:
+// offer_discount / extend_lease / schedule_meeting / send_payment_reminder.
+
+import { computeRiskForTenant, type RecommendedAction } from "@/lib/tenants/risk-engine"
+
+const ACTION_LABELS: Record<RecommendedAction, string> = {
+  offer_discount:        "Offer a temporary rent discount or CAM rebate to retain footfall.",
+  extend_lease:          "Initiate lease-extension talks before the renewal window closes.",
+  schedule_meeting:      "Schedule an in-person meeting to address operational complaints.",
+  send_payment_reminder: "Send an escalated payment reminder and review the dunning sequence.",
+  monitor:               "No action required — continue monitoring weekly.",
+}
+
+export const calculateTenantRiskTool: Tool = {
+  name: "calculate_tenant_risk",
+  description:
+    "Compute a 0..100 risk score for a single tenant from late payments, POS sales trend, complaints, and lease expiry. Returns per-signal point contributions.",
+  parameters: z.object({
+    tenantId: z.string().describe("The tenant's UUID"),
+  }),
+  handler: async (params, context): Promise<ToolResult> => {
+    const { tenantId } = params as { tenantId: string }
+    const organizationId = (context as any)?.organizationId
+    if (!organizationId) {
+      return { success: false, error: "Missing organization context", data: null }
+    }
+    try {
+      await db.execute(sql`SELECT set_config('app.current_organization_id', ${organizationId}, true)`)
+      const score = await computeRiskForTenant(organizationId, tenantId)
+      if (!score) return { success: false, error: "Tenant not found", data: null }
+      return { success: true, data: score }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : "Risk calc failed", data: null }
+    }
+  },
+}
+
+export const suggestTenantActionsTool: Tool = {
+  name: "suggest_tenant_actions",
+  description:
+    "Given a tenant's risk score, return human-readable recommended actions (offer discount, extend lease, schedule meeting, send reminder).",
+  parameters: z.object({
+    tenantId: z.string().describe("The tenant's UUID"),
+  }),
+  handler: async (params, context): Promise<ToolResult> => {
+    const { tenantId } = params as { tenantId: string }
+    const organizationId = (context as any)?.organizationId
+    if (!organizationId) {
+      return { success: false, error: "Missing organization context", data: null }
+    }
+    try {
+      await db.execute(sql`SELECT set_config('app.current_organization_id', ${organizationId}, true)`)
+      const score = await computeRiskForTenant(organizationId, tenantId)
+      if (!score) return { success: false, error: "Tenant not found", data: null }
+
+      const actions = score.recommendedActions.map((a) => ({ action: a, description: ACTION_LABELS[a] }))
+      return {
+        success: true,
+        data: {
+          tenantId,
+          riskScore: score.riskScore,
+          riskLevel: score.riskLevel,
+          actions,
+          rationale: {
+            latePaymentPoints: score.latePaymentPoints,
+            salesDropPoints:   score.salesDropPoints,
+            complaintPoints:   score.complaintPoints,
+            leaseExpiryPoints: score.leaseExpiryPoints,
+          },
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : "Suggest failed", data: null }
+    }
+  },
+}
+
 // Export all tools
 export const tenantRelationsTools: Tool[] = [
   searchTenantHistoryTool,
@@ -355,5 +434,7 @@ export const tenantRelationsTools: Tool[] = [
   sendCommunicationTool,
   updateConversationTool,
   getLeaseRenewalOptionsTool,
+  calculateTenantRiskTool,
+  suggestTenantActionsTool,
 ]
 

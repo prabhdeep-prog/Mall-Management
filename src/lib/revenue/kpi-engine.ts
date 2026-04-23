@@ -218,10 +218,22 @@ export async function computeMallKPIs(
     LEFT JOIN leases l
       ON l.tenant_id = t.id
      AND l.status    = 'active'
-    LEFT JOIN pos_sales_data p
-      ON p.tenant_id   = t.id
-     AND p.sales_date >= ${range.startDate}::date
-     AND p.sales_date <= ${range.endDate}::date
+    LEFT JOIN (
+      SELECT
+        pi.tenant_id,
+        psd.sales_date,
+        SUM(psd.gross_sales)       AS gross_sales,
+        SUM(psd.net_sales)         AS net_sales,
+        SUM(psd.refunds)           AS refunds,
+        SUM(psd.transaction_count) AS transaction_count
+      FROM pos_sales_data psd
+      JOIN pos_integrations pi
+        ON pi.id     = psd.pos_integration_id
+       AND pi.status = 'connected'
+      WHERE psd.sales_date >= ${range.startDate}::date
+        AND psd.sales_date <= ${range.endDate}::date
+      GROUP BY pi.tenant_id, psd.sales_date
+    ) p ON p.tenant_id = t.id
     WHERE t.status = 'active'
     GROUP BY t.id, t.business_name
     ORDER BY SUM(p.gross_sales) DESC NULLS LAST

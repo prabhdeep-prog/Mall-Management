@@ -141,7 +141,7 @@ export async function aggregateSalesForPeriod(
     .from(posSalesData)
     .where(
       and(
-        sql`${posSalesData.posIntegrationId} = ANY(${sql.raw(`ARRAY['${integrationIds.join("','")}']::uuid[]`)})`,
+        sql`${posSalesData.posIntegrationId} = ANY(ARRAY[${sql.join(integrationIds.map(id => sql`${id}::uuid`), sql`, `)}])`,
         sql`${posSalesData.salesDate} >= ${toDateStr(startDate)}::date`,
         sql`${posSalesData.salesDate} <= ${toDateStr(endDate)}::date`,
       )
@@ -292,19 +292,60 @@ export async function calculateTenantRevenue(input: BillingInput): Promise<Billi
     sales = await aggregateSalesForPeriod(tenantId, period.startDate, period.endDate)
   }
 
-  // ── 3. MG calculation ───────────────────────────────────────────────────────
+  // ── 3. Billing by lease type ────────────────────────────────────────────────
   const monthlyMG   = parseFloat(String(lease.monthlyMg ?? 0))
   const revSharePct = parseFloat(String(lease.revenueSharePercentage ?? 0))
   const breakpoint  = lease.revShareBreakpoint ? parseFloat(String(lease.revShareBreakpoint)) : null
   const areaSqft    = lease.areaSqft ? parseFloat(String(lease.areaSqft)) : null
+  const baseRent    = parseFloat(String(lease.baseRent ?? 0))
+  const leaseType   = lease.leaseType ?? "fixed_rent"
 
-  const mg = calculateMGBilling({
-    grossSales:  sales.grossSales,
-    monthlyMG,
-    revSharePct,
-    periodDays,
-    breakpoint,
-  })
+  // Apply rent escalation if applicable
+  let effectiveBaseRent = baseRent
+  let effectiveMonthlyMG = monthlyMG
+  if (lease.rentEscalationPercentage && lease.escalationFrequencyMonths) {
+    const escalationPct = parseFloat(String(lease.rentEscalationPercentage))
+    const escalationMonths = lease.escalationFrequencyMonths
+    const leaseStartDate = new Date(lease.startDate)
+    const monthsSinceStart = Math.floor((period.startDate.getTime() - leaseStartDate.getTime()) / (30 * 86400000))
+    const escalations = Math.floor(monthsSinceStart / escalationMonths)
+    if (escalations > 0) {
+      const factor = Math.pow(1 + escalationPct / 100, escalations)
+      effectiveBaseRent = round2(baseRent * factor)
+      effectiveMonthlyMG = round2(monthlyMG * factor)
+    }
+  }
+
+  let mg: MGCalculation
+  if (leaseType === "fixed_rent") {
+    // Fixed rent: pro-rate the base rent, no revenue share
+    const proratedRent = round2(effectiveBaseRent * (periodDays / 30))
+    mg = {
+      minimumGuarantee: proratedRent,
+      revShareBase: 0,
+      revShareAmount: 0,
+      amountDue: proratedRent,
+      excessOverMG: 0,
+    }
+  } else if (leaseType === "revenue_share") {
+    // Pure revenue share: percentage of sales, no minimum guarantee
+    mg = calculateMGBilling({
+      grossSales:  sales.grossSales,
+      monthlyMG:   0,
+      revSharePct,
+      periodDays,
+      breakpoint,
+    })
+  } else {
+    // Hybrid (default): max(MG, revenue share) — standard Indian mall model
+    mg = calculateMGBilling({
+      grossSales:  sales.grossSales,
+      monthlyMG:   effectiveMonthlyMG,
+      revSharePct,
+      periodDays,
+      breakpoint,
+    })
+  }
 
   // ── 4. CAM calculation ──────────────────────────────────────────────────────
   const monthlyCam     = parseFloat(String(lease.camCharges ?? 0))

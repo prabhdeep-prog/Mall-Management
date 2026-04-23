@@ -30,8 +30,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
+import { CreateWorkOrderDialog } from "@/components/work-orders/create-work-order-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,6 +61,10 @@ import {
   UserPlus,
   ArrowUp,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { formatRelativeTime } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
@@ -82,6 +86,11 @@ interface WorkOrder {
     id: string
     businessName: string
     contactPerson: string | null
+  } | null
+  assignedVendor: {
+    id: string
+    name: string
+    type: string | null
   } | null
   createdByAgent: boolean
 }
@@ -129,6 +138,8 @@ function WorkOrdersPageContent() {
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [priorityFilter, setPriorityFilter] = React.useState<string>("all")
   const [categoryFilter, setCategoryFilter] = React.useState<string>("all")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [viewDialogOpen, setViewDialogOpen] = React.useState(false)
   const [assignDialogOpen, setAssignDialogOpen] = React.useState(false)
@@ -136,16 +147,10 @@ function WorkOrdersPageContent() {
   const [selectedWorkOrder, setSelectedWorkOrder] = React.useState<WorkOrder | null>(null)
   const [filterTenantName, setFilterTenantName] = React.useState<string | null>(null)
 
-  // Form state
-  const [formData, setFormData] = React.useState({
-    title: "",
-    description: "",
-    category: "",
-    priority: "",
-    location: "",
-  })
-
   const [assignee, setAssignee] = React.useState("")
+  const [assignNotes, setAssignNotes] = React.useState("")
+  const [vendors, setVendors] = React.useState<{ id: string; name: string; type: string | null; contactPerson: string | null }[]>([])
+  const [vendorsLoaded, setVendorsLoaded] = React.useState(false)
 
   // Handler for viewing work order details
   const handleViewWorkOrder = (wo: WorkOrder) => {
@@ -187,12 +192,18 @@ function WorkOrdersPageContent() {
 
     setIsSubmitting(true)
     try {
+      const selectedVendor = vendors.find((v) => v.id === assignee)
+      const assigneeName = selectedVendor
+        ? selectedVendor.name
+        : assignee
+
       const response = await fetch(`/api/work-orders/${selectedWorkOrder.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           assignedTo: assignee,
           status: selectedWorkOrder.status === "open" ? "in_progress" : selectedWorkOrder.status,
+          ...(assignNotes ? { notes: assignNotes } : {}),
         }),
       })
 
@@ -200,11 +211,12 @@ function WorkOrdersPageContent() {
 
       toast({
         title: "Work Order Assigned",
-        description: `Work order ${selectedWorkOrder.workOrderNumber} assigned to ${assignee}`,
+        description: `${selectedWorkOrder.workOrderNumber} assigned to ${assigneeName}`,
       })
 
       setAssignDialogOpen(false)
       setAssignee("")
+      setAssignNotes("")
       fetchWorkOrders()
     } catch (error) {
       console.error("Error assigning work order:", error)
@@ -277,11 +289,26 @@ function WorkOrdersPageContent() {
     }
   }
 
+  // Load vendors when assign dialog opens
+  const loadVendors = React.useCallback(async () => {
+    if (vendorsLoaded) return
+    try {
+      const res = await fetch("/api/vendors?status=active")
+      if (res.ok) {
+        const data = await res.json()
+        setVendors(data.data ?? data ?? [])
+        setVendorsLoaded(true)
+      }
+    } catch {}
+  }, [vendorsLoaded])
+
   // Open assign dialog
   const handleOpenAssignDialog = (wo: WorkOrder) => {
     setSelectedWorkOrder(wo)
     setAssignee(wo.assignedTo || "")
+    setAssignNotes("")
     setAssignDialogOpen(true)
+    loadVendors()
   }
 
   // Fetch work orders from API - filtered by selected property
@@ -321,59 +348,6 @@ function WorkOrdersPageContent() {
     fetchWorkOrders()
   }, [fetchWorkOrders])
 
-  // Handle form submission
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-
-    try {
-      if (!selectedProperty) {
-        toast({
-          title: "Error",
-          description: "Please select a property from the header first.",
-          variant: "destructive",
-        })
-        setIsSubmitting(false)
-        return
-      }
-      
-      const response = await fetch("/api/work-orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          propertyId: selectedProperty.id,
-        }),
-      })
-
-      if (!response.ok) throw new Error("Failed to create work order")
-
-      toast({
-        title: "Success",
-        description: "Work order created successfully!",
-      })
-
-      setDialogOpen(false)
-      setFormData({
-        title: "",
-        description: "",
-        category: "",
-        priority: "",
-        location: "",
-      })
-      fetchWorkOrders()
-    } catch (error) {
-      console.error("Error creating work order:", error)
-      toast({
-        title: "Error",
-        description: "Failed to create work order. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const filteredWorkOrders = workOrders.filter((wo) => {
     const matchesSearch =
       wo.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -384,6 +358,16 @@ function WorkOrdersPageContent() {
 
     return matchesSearch && matchesCategory
   })
+
+  const totalPages = Math.ceil(filteredWorkOrders.length / pageSize)
+  const paginatedWorkOrders = filteredWorkOrders.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, priorityFilter, categoryFilter])
 
   const stats = {
     total: workOrders.length,
@@ -407,100 +391,16 @@ function WorkOrdersPageContent() {
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                New Work Order
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
-              <form onSubmit={handleSubmit}>
-                <DialogHeader>
-                  <DialogTitle>Create Work Order</DialogTitle>
-                  <DialogDescription>
-                    Create a new maintenance or repair request.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid gap-2">
-                    <label className="text-sm font-medium">Title *</label>
-                    <Input 
-                      placeholder="Brief description of the issue" 
-                      value={formData.title}
-                      onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium">Category *</label>
-                      <Select 
-                        value={formData.category}
-                        onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
-                        required
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="hvac">HVAC</SelectItem>
-                          <SelectItem value="plumbing">Plumbing</SelectItem>
-                          <SelectItem value="electrical">Electrical</SelectItem>
-                          <SelectItem value="cleaning">Cleaning</SelectItem>
-                          <SelectItem value="security">Security</SelectItem>
-                          <SelectItem value="general">General</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-medium">Priority</label>
-                      <Select
-                        value={formData.priority}
-                        onValueChange={(value) => setFormData(prev => ({ ...prev, priority: value }))}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="low">Low</SelectItem>
-                          <SelectItem value="medium">Medium</SelectItem>
-                          <SelectItem value="high">High</SelectItem>
-                          <SelectItem value="critical">Critical</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <label className="text-sm font-medium">Location</label>
-                    <Input 
-                      placeholder="e.g., Unit 203, 2nd Floor" 
-                      value={formData.location}
-                      onChange={(e) => setFormData(prev => ({ ...prev, location: e.target.value }))}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <label className="text-sm font-medium">Description</label>
-                    <textarea
-                      className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      placeholder="Detailed description of the issue..."
-                      value={formData.description}
-                      onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Create Work Order
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button className="gap-2" onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4" />
+            New Work Order
+          </Button>
+          <CreateWorkOrderDialog
+            open={dialogOpen}
+            onOpenChange={setDialogOpen}
+            selectedPropertyId={selectedProperty?.id}
+            onSuccess={fetchWorkOrders}
+          />
         </div>
       </div>
 
@@ -619,6 +519,7 @@ function WorkOrdersPageContent() {
               </p>
             </div>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -633,7 +534,7 @@ function WorkOrdersPageContent() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredWorkOrders.map((wo) => {
+                {paginatedWorkOrders.map((wo) => {
                   const priority = priorityConfig[wo.priority] || priorityConfig.medium
                   const status = statusConfig[wo.status] || statusConfig.open
                   return (
@@ -684,14 +585,26 @@ function WorkOrdersPageContent() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {wo.assignedTo ? (
+                        {wo.assignedVendor ? (
                           <div className="flex items-center gap-2">
                             <Avatar className="h-6 w-6">
                               <AvatarFallback className="text-[10px]">
-                                {wo.assignedTo.charAt(0)}
+                                {wo.assignedVendor.name.charAt(0)}
                               </AvatarFallback>
                             </Avatar>
-                            <span className="text-sm">{wo.assignedTo}</span>
+                            <div>
+                              <div className="text-sm font-medium">{wo.assignedVendor.name}</div>
+                              {wo.assignedVendor.type && (
+                                <div className="text-xs text-muted-foreground capitalize">{wo.assignedVendor.type}</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : wo.assignedTo ? (
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-6 w-6">
+                              <AvatarFallback className="text-[10px]">V</AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm text-muted-foreground">Assigned</span>
                           </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">Unassigned</span>
@@ -755,6 +668,45 @@ function WorkOrdersPageContent() {
                 })}
               </TableBody>
             </Table>
+            {filteredWorkOrders.length > 0 && (
+              <div className="flex items-center justify-between border-t pt-4 mt-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>
+                    Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredWorkOrders.length)} of {filteredWorkOrders.length}
+                  </span>
+                  <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                    <SelectTrigger className="h-8 w-[70px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span>per page</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="px-3 text-sm font-medium">
+                    {currentPage} / {totalPages || 1}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -795,7 +747,12 @@ function WorkOrdersPageContent() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Assigned To</p>
-                  <p className="font-medium mt-1">{selectedWorkOrder.assignedTo || "Unassigned"}</p>
+                  <p className="font-medium mt-1">
+                    {selectedWorkOrder.assignedVendor?.name || (selectedWorkOrder.assignedTo ? "Assigned" : "Unassigned")}
+                    {selectedWorkOrder.assignedVendor?.type && (
+                      <span className="text-xs text-muted-foreground ml-1 capitalize">({selectedWorkOrder.assignedVendor.type})</span>
+                    )}
+                  </p>
                 </div>
               </div>
               <div>
@@ -862,12 +819,12 @@ function WorkOrdersPageContent() {
 
       {/* Assign Work Order Dialog */}
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-        <DialogContent className="sm:max-w-[400px]">
+        <DialogContent className="sm:max-w-[420px]">
           <form onSubmit={handleAssignWorkOrder}>
             <DialogHeader>
               <DialogTitle>Assign Work Order</DialogTitle>
               <DialogDescription>
-                {selectedWorkOrder?.workOrderNumber} - {selectedWorkOrder?.title}
+                {selectedWorkOrder?.workOrderNumber} – {selectedWorkOrder?.title}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -875,23 +832,49 @@ function WorkOrdersPageContent() {
                 <label className="text-sm font-medium">Assign To *</label>
                 <Select value={assignee} onValueChange={setAssignee}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select staff member" />
+                    <SelectValue placeholder="Select vendor or staff" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="John Smith">John Smith (Technician)</SelectItem>
-                    <SelectItem value="Mike Johnson">Mike Johnson (Electrician)</SelectItem>
-                    <SelectItem value="Sarah Williams">Sarah Williams (HVAC Specialist)</SelectItem>
-                    <SelectItem value="David Brown">David Brown (Plumber)</SelectItem>
-                    <SelectItem value="External Vendor">External Vendor</SelectItem>
+                    {vendors.length > 0 ? (
+                      vendors.map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {v.name}
+                          {v.type ? ` (${v.type})` : ""}
+                          {v.contactPerson ? ` · ${v.contactPerson}` : ""}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="unassigned" disabled>
+                        No vendors found — add vendors first
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
+                {vendors.length === 0 && vendorsLoaded && (
+                  <p className="text-xs text-muted-foreground">
+                    No active vendors found.{" "}
+                    <a href="/vendors" className="text-primary underline">Add vendors</a> to assign work orders.
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium">Notes <span className="text-muted-foreground font-normal">(optional)</span></label>
+                <Input
+                  placeholder="e.g. Please call before visiting"
+                  value={assignNotes}
+                  onChange={(e) => setAssignNotes(e.target.value)}
+                />
               </div>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAssignDialogOpen(false)}>
+              <Button type="button" variant="outline" onClick={() => {
+                setAssignDialogOpen(false)
+                setAssignee("")
+                setAssignNotes("")
+              }}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting || !assignee}>
+              <Button type="submit" disabled={isSubmitting || !assignee || assignee === "unassigned"}>
                 {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Assign
               </Button>

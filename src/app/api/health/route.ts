@@ -11,6 +11,7 @@ import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { sql } from "drizzle-orm"
 import { isRedisHealthy, isRedisAvailable } from "@/lib/cache"
+import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -22,6 +23,7 @@ interface HealthStatus {
   services: {
     database: ServiceStatus
     cache: ServiceStatus
+    storage: ServiceStatus
     application: ServiceStatus
   }
   uptime: number
@@ -43,6 +45,7 @@ export async function GET() {
     services: {
       database: { status: "down" },
       cache: { status: "down" },
+      storage: { status: "down" },
       application: { status: "up" },
     },
     uptime: Math.floor((Date.now() - startTime) / 1000),
@@ -100,6 +103,39 @@ export async function GET() {
     if (healthStatus.status === "healthy") {
       healthStatus.status = "degraded"
     }
+  }
+
+  // Check S3 storage health
+  try {
+    const bucket = process.env.AWS_S3_BUCKET
+    if (!bucket) {
+      healthStatus.services.storage = {
+        status: "down",
+        message: "AWS_S3_BUCKET not configured",
+      }
+      if (healthStatus.status === "healthy") healthStatus.status = "degraded"
+    } else {
+      const s3Start = Date.now()
+      const s3 = new S3Client({
+        region: process.env.AWS_S3_REGION ?? "ap-south-1",
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "",
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "",
+        },
+      })
+      await s3.send(new HeadBucketCommand({ Bucket: bucket }))
+      healthStatus.services.storage = {
+        status: "up",
+        latency: Date.now() - s3Start,
+        message: "S3 bucket accessible",
+      }
+    }
+  } catch (error) {
+    healthStatus.services.storage = {
+      status: "down",
+      message: error instanceof Error ? error.message : "S3 connection failed",
+    }
+    if (healthStatus.status === "healthy") healthStatus.status = "degraded"
   }
 
   // Determine overall health status

@@ -22,9 +22,15 @@ import { NextRequest, NextResponse } from "next/server"
 import type Stripe from "stripe"
 import { eq } from "drizzle-orm"
 import { serviceDb } from "@/lib/db"
-import { subscriptions, billing_events } from "@/lib/db/schema"
+import { subscriptions, billingEvents } from "@/lib/db/schema"
 import { constructStripeEvent, stripeSubStatusToInternal } from "@/lib/billing/stripe"
 import { initiateDunning } from "@/lib/billing/dunning"
+
+// App Router segment config — raw body is available via request.text()/arrayBuffer()
+// without any bodyParser flag. Force Node runtime (Stripe SDK uses Node crypto) and
+// dynamic rendering so this route is never statically optimised.
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest) {
   // ── 1. Read raw body as Buffer (Stripe requires this for signature verification) ─
@@ -46,9 +52,9 @@ export async function POST(request: NextRequest) {
 
   // ── 3. Idempotency check ───────────────────────────────────────────────────
   const [existing] = await serviceDb
-    .select({ id: billing_events.id, status: billing_events.status })
-    .from(billing_events)
-    .where(eq(billing_events.idempotency_key, eventId))
+    .select({ id: billingEvents.id, status: billingEvents.status })
+    .from(billingEvents)
+    .where(eq(billingEvents.idempotencyKey, eventId))
     .limit(1)
 
   if (existing) {
@@ -58,15 +64,15 @@ export async function POST(request: NextRequest) {
   // ── 4. Insert billing_event ────────────────────────────────────────────────
   // We insert before processing to claim the idempotency slot (prevent races)
   const [eventRow] = await serviceDb
-    .insert(billing_events)
+    .insert(billingEvents)
     .values({
-      idempotency_key: eventId,
-      provider:        "stripe",
-      event_type:      eventType,
-      payload:         event as unknown as Record<string, unknown>,
-      status:          "pending",
+      idempotencyKey: eventId,
+      provider:       "stripe",
+      eventType:      eventType,
+      payload:        event as unknown as Record<string, unknown>,
+      status:         "pending",
     })
-    .returning({ id: billing_events.id })
+    .returning({ id: billingEvents.id })
     .onConflictDoNothing()
 
   if (!eventRow) {
@@ -94,15 +100,15 @@ export async function POST(request: NextRequest) {
 
   // ── 6. Update billing_event with resolution context ────────────────────────
   await serviceDb
-    .update(billing_events)
+    .update(billingEvents)
     .set({
-      status:          success ? "processed" : "failed",
-      error_detail:    errMsg || null,
-      processed_at:    now,
-      organization_id: orgId,
-      subscription_id: subId,
+      status:         success ? "processed" : "failed",
+      errorDetail:    errMsg || null,
+      processedAt:    now,
+      organizationId: orgId,
+      subscriptionId: subId,
     })
-    .where(eq(billing_events.id, eventRow.id))
+    .where(eq(billingEvents.id, eventRow.id))
 
   // Return 200 — Stripe retries on non-2xx
   return NextResponse.json({ received: true, processed: success })
@@ -136,11 +142,11 @@ async function processStripeEvent(
 
       if (!orgId) return { orgId: null, subId: null }
 
-      // Find our pending record (inserted by subscribe route with no provider_subscription_id)
+      // Find our pending record (inserted by subscribe route with no providerSubscriptionId)
       const [ourSub] = await serviceDb
         .select({ id: subscriptions.id })
         .from(subscriptions)
-        .where(eq(subscriptions.organization_id, orgId))
+        .where(eq(subscriptions.organizationId, orgId))
         .limit(1)
 
       if (!ourSub) return { orgId, subId: null }
@@ -148,9 +154,9 @@ async function processStripeEvent(
       await serviceDb
         .update(subscriptions)
         .set({
-          provider_subscription_id: stripeSubId,
-          status:                   "trialing",
-          updated_at:               now,
+          providerSubscriptionId: stripeSubId,
+          status:                 "trialing",
+          updatedAt:              now,
         })
         .where(eq(subscriptions.id, ourSub.id))
 
@@ -169,9 +175,9 @@ async function processStripeEvent(
     case "customer.subscription.deleted": {
       const stripeSub = event.data.object as Stripe.Subscription
       const [ourSub]  = await serviceDb
-        .select({ id: subscriptions.id, organization_id: subscriptions.organization_id })
+        .select({ id: subscriptions.id, organization_id: subscriptions.organizationId })
         .from(subscriptions)
-        .where(eq(subscriptions.provider_subscription_id, stripeSub.id))
+        .where(eq(subscriptions.providerSubscriptionId, stripeSub.id))
         .limit(1)
 
       if (!ourSub) return { orgId: null, subId: null }
@@ -179,9 +185,9 @@ async function processStripeEvent(
       await serviceDb
         .update(subscriptions)
         .set({
-          status:       "cancelled",
-          cancelled_at: now,
-          updated_at:   now,
+          status:      "cancelled",
+          cancelledAt: now,
+          updatedAt:   now,
         })
         .where(eq(subscriptions.id, ourSub.id))
 
@@ -206,9 +212,9 @@ async function processStripeEvent(
       if (!stripeSubId) return { orgId: null, subId: null }
 
       const [ourSub] = await serviceDb
-        .select({ id: subscriptions.id, organization_id: subscriptions.organization_id })
+        .select({ id: subscriptions.id, organization_id: subscriptions.organizationId })
         .from(subscriptions)
-        .where(eq(subscriptions.provider_subscription_id, stripeSubId))
+        .where(eq(subscriptions.providerSubscriptionId, stripeSubId))
         .limit(1)
 
       if (!ourSub) return { orgId: null, subId: null }
@@ -223,15 +229,15 @@ async function processStripeEvent(
       await serviceDb
         .update(subscriptions)
         .set({
-          status:                "active",
-          current_period_start:  periodStart,
-          current_period_end:    periodEnd,
+          status:              "active",
+          currentPeriodStart:  periodStart,
+          currentPeriodEnd:    periodEnd,
           // Clear any dunning state
-          payment_failed_at:     null,
-          payment_failure_count: 0,
-          next_retry_at:         null,
-          grace_period_ends_at:  null,
-          updated_at:            now,
+          paymentFailedAt:     null,
+          paymentFailureCount: 0,
+          nextRetryAt:         null,
+          gracePeriodEndsAt:   null,
+          updatedAt:           now,
         })
         .where(eq(subscriptions.id, ourSub.id))
 
@@ -250,11 +256,11 @@ async function processStripeEvent(
       const [ourSub] = await serviceDb
         .select({
           id:              subscriptions.id,
-          organization_id: subscriptions.organization_id,
+          organization_id: subscriptions.organizationId,
           status:          subscriptions.status,
         })
         .from(subscriptions)
-        .where(eq(subscriptions.provider_subscription_id, stripeSubId))
+        .where(eq(subscriptions.providerSubscriptionId, stripeSubId))
         .limit(1)
 
       if (!ourSub) return { orgId: null, subId: null }
@@ -263,7 +269,7 @@ async function processStripeEvent(
       if (ourSub.status !== "past_due") {
         await serviceDb
           .update(subscriptions)
-          .set({ status: "past_due", updated_at: now })
+          .set({ status: "past_due", updatedAt: now })
           .where(eq(subscriptions.id, ourSub.id))
 
         await initiateDunning({
@@ -282,9 +288,9 @@ async function processStripeEvent(
       // Could send a reminder email here. For now, just log it.
       const stripeSub = event.data.object as Stripe.Subscription
       const [ourSub] = await serviceDb
-        .select({ id: subscriptions.id, organization_id: subscriptions.organization_id })
+        .select({ id: subscriptions.id, organization_id: subscriptions.organizationId })
         .from(subscriptions)
-        .where(eq(subscriptions.provider_subscription_id, stripeSub.id))
+        .where(eq(subscriptions.providerSubscriptionId, stripeSub.id))
         .limit(1)
 
       return { orgId: ourSub?.organization_id ?? null, subId: ourSub?.id ?? null }
@@ -303,9 +309,9 @@ async function syncStripeSubscription(
   now:       Date,
 ): Promise<ProcessResult> {
   const [ourSub] = await serviceDb
-    .select({ id: subscriptions.id, organization_id: subscriptions.organization_id })
+    .select({ id: subscriptions.id, organization_id: subscriptions.organizationId })
     .from(subscriptions)
-    .where(eq(subscriptions.provider_subscription_id, stripeSub.id))
+    .where(eq(subscriptions.providerSubscriptionId, stripeSub.id))
     .limit(1)
 
   if (!ourSub) return { orgId: null, subId: null }
@@ -325,18 +331,14 @@ async function syncStripeSubscription(
   await serviceDb
     .update(subscriptions)
     .set({
-      status:               internalStatus,
-      current_period_start: periodStart,
-      current_period_end:   periodEnd,
-      cancel_at:            cancelAt,
-      updated_at:           now,
+      status:             internalStatus,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd:   periodEnd,
+      cancelAt:           cancelAt,
+      updatedAt:          now,
     })
     .where(eq(subscriptions.id, ourSub.id))
 
   return { orgId: ourSub.organization_id, subId: ourSub.id }
 }
 
-// ── Config: raw body required for Stripe signature verification ───────────────
-export const config = {
-  api: { bodyParser: false },
-}

@@ -44,15 +44,15 @@ export async function POST(request: NextRequest) {
     .select({
       id:                       subscriptions.id,
       provider:                 subscriptions.provider,
-      provider_subscription_id: subscriptions.provider_subscription_id,
-      provider_customer_id:     subscriptions.provider_customer_id,
+      provider_subscription_id: subscriptions.providerSubscriptionId,
+      provider_customer_id:     subscriptions.providerCustomerId,
       status:                   subscriptions.status,
       metadata:                 subscriptions.metadata,
     })
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.organization_id, orgId),
+        eq(subscriptions.organizationId, orgId),
         sql`status NOT IN ('cancelled', 'expired')`
       )
     )

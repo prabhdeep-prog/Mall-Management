@@ -1,9 +1,38 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { posIntegrations } from "@/lib/db/schema"
 import { getPOSProvider } from "@/lib/pos"
 import type { POSProviderKey } from "@/lib/pos/types"
-import { eq } from "drizzle-orm"
+import { eq, and } from "drizzle-orm"
+import { encrypt } from "@/lib/crypto/encryption"
+
+// ── GET — fetch POS integrations for a tenant/lease ──────────────────────────
+export async function GET(request: NextRequest) {
+  try {
+    const session = await auth()
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const tenantId = searchParams.get("tenantId")
+    const leaseId  = searchParams.get("leaseId")
+
+    const conditions = []
+    if (tenantId) conditions.push(eq(posIntegrations.tenantId, tenantId))
+    if (leaseId)  conditions.push(eq(posIntegrations.leaseId, leaseId))
+
+    const rows = await db
+      .select()
+      .from(posIntegrations)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(posIntegrations.createdAt)
+
+    return NextResponse.json({ success: true, data: rows })
+  } catch (error) {
+    console.error("Error fetching POS integrations:", error)
+    return NextResponse.json({ success: false, error: "Failed to fetch integrations" }, { status: 500 })
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -18,18 +47,17 @@ export async function POST(request: Request) {
     }
 
     // Test the connection first
-    const posProvider = getPOSProvider(provider as POSProviderKey)
-    const testResult = await posProvider.testConnection({
-      provider: provider as POSProviderKey,
+    const posProvider = getPOSProvider(provider as POSProviderKey, {
+      apiKey,
       storeId,
       locationId,
-      apiKey,
       syncFrequency: syncFrequency || "daily",
     })
+    const testResult = await posProvider.testConnection()
 
-    if (!testResult.success) {
+    if (!testResult.ok) {
       return NextResponse.json(
-        { success: false, error: testResult.message },
+        { success: false, error: testResult.error || "Connection test failed" },
         { status: 400 }
       )
     }
@@ -50,7 +78,7 @@ export async function POST(request: Request) {
           provider,
           storeId,
           locationId,
-          apiKeyEncrypted: apiKey, // In production: encrypt this
+          apiKeyEncrypted: encrypt(apiKey),
           syncFrequency: syncFrequency || "daily",
           status: "connected",
           lastSyncAt: new Date(),
@@ -71,7 +99,7 @@ export async function POST(request: Request) {
           provider,
           storeId,
           locationId,
-          apiKeyEncrypted: apiKey, // In production: encrypt this
+          apiKeyEncrypted: encrypt(apiKey),
           syncFrequency: syncFrequency || "daily",
           status: "connected",
           lastSyncAt: new Date(),

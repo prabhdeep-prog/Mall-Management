@@ -5,23 +5,30 @@
  *
  * Registered URL: https://{slug}.mallos.com/api/webhooks/pos/razorpay-pos
  * Header: X-Razorpay-Signature: <hex_digest>
- * Header: X-Razorpay-Account-ID: <account_id>  (used for routing)
+ * Header: X-Razorpay-Account-ID: <account_id>
  *
  * Events handled:
  *   payment.captured   → billable transaction
  *   refund.processed   → refund row
  *   payment.failed     → ignored
+ *
+ * Pipeline (async):
+ *   verify HMAC → parse event → enqueue to BullMQ → return 200 immediately
+ *   Worker picks up:  normalize → insert → dedup → aggregate → broadcast
+ *
+ * Fallback:
+ *   If Redis / BullMQ is unavailable, falls back to synchronous ingestTransaction()
+ *   so no data is lost during Redis downtime.
  */
 
 import { type NextRequest, NextResponse } from "next/server"
 import { serviceDb } from "@/lib/db"
 import { sql } from "drizzle-orm"
 import { decryptApiKey } from "@/lib/crypto/api-key"
-import {
-  verifyRazorpayPOSSignature,
-  parseRazorpayPOSWebhook,
-  type RazorpayPOSWebhookPayload,
-} from "@/lib/pos/providers/razorpay-pos"
+import { verifyRazorpayPOSSignature } from "@/lib/pos/providers/razorpay-pos"
+import { ingestTransaction, type POSIntegrationRow } from "@/lib/pos/ingest"
+import { enqueuePosTransaction } from "@/lib/queues/pos-ingestion"
+import { logger } from "@/lib/logger"
 
 export const runtime = "nodejs"
 
@@ -29,19 +36,21 @@ export async function POST(req: NextRequest) {
   const rawBody   = await req.text()
   const signature = req.headers.get("x-razorpay-signature") ?? ""
   const accountId = req.headers.get("x-razorpay-account-id") ?? ""
+  const timestamp = Number(req.headers.get("x-webhook-timestamp"))
 
   if (!accountId) {
     return NextResponse.json({ error: "Missing X-Razorpay-Account-ID" }, { status: 400 })
   }
 
+  if (!timestamp || Math.abs(Date.now() - timestamp) > 300_000) {
+    return new Response("Unauthorized", { status: 401 })
+  }
+
   // ── 1. Look up integration by account ID ─────────────────────────────────
-  const integrations = await serviceDb.execute<{
-    id:                 string
-    organization_id:    string
-    tenant_id:          string
-    webhook_secret_enc: string | null
-  }>(sql`
-    SELECT id, organization_id, tenant_id,
+  const integrations = await serviceDb.execute<
+    POSIntegrationRow & { webhook_secret_enc: string | null }
+  >(sql`
+    SELECT id, organization_id, tenant_id, property_id, lease_id,
            metadata->>'webhook_secret_enc' AS webhook_secret_enc
     FROM pos_integrations
     WHERE provider_key = 'razorpay_pos'
@@ -51,75 +60,63 @@ export async function POST(req: NextRequest) {
   `)
 
   if (integrations.length === 0) {
-    return NextResponse.json({ ok: false }, { status: 200 })
+    return NextResponse.json({ ok: false, reason: "Unknown account" }, { status: 200 })
   }
 
   const integration = integrations[0]
 
-  // ── 2. Verify HMAC ────────────────────────────────────────────────────────
-  if (integration.webhook_secret_enc) {
-    const secret = decryptApiKey(integration.webhook_secret_enc)
-    if (!verifyRazorpayPOSSignature(rawBody, signature, secret)) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
-    }
+  // ── 2. Verify HMAC signature — required; reject if secret is missing ──────
+  if (!integration.webhook_secret_enc) {
+    return new Response("Unauthorized", { status: 401 })
   }
 
-  // ── 3. Parse ──────────────────────────────────────────────────────────────
-  let payload: RazorpayPOSWebhookPayload
+  const secret = decryptApiKey(integration.webhook_secret_enc)
+  if (!verifyRazorpayPOSSignature(rawBody, signature, secret)) {
+    logger.warn("razorpay-pos-webhook: invalid signature", {
+      integrationId: integration.id,
+      accountId,
+    })
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 })
+  }
+
+  // ── 3. Parse event ────────────────────────────────────────────────────────
+  let payload: Record<string, unknown>
   try {
-    payload = JSON.parse(rawBody) as RazorpayPOSWebhookPayload
+    payload = JSON.parse(rawBody) as Record<string, unknown>
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   }
 
-  // Skip payment.failed
+  // Skip payment.failed — no financial impact
   if (payload.event === "payment.failed") {
     return NextResponse.json({ ok: true, skipped: "payment.failed" })
   }
 
-  const tx = parseRazorpayPOSWebhook(payload)
-  if (!tx) {
-    return NextResponse.json({ ok: true, skipped: "unhandled event" })
+  // Only handle payment.captured and refund.processed
+  if (payload.event !== "payment.captured" && payload.event !== "refund.processed") {
+    return NextResponse.json({ ok: true, skipped: payload.event })
   }
 
-  // ── 4. Ingest ──────────────────────────────────────────────────────────────
-  try {
-    await serviceDb.execute(sql`
-      INSERT INTO pos_transactions (
-        organization_id, tenant_id, pos_integration_id,
-        provider_tx_id, provider_key,
-        transaction_date, transaction_time,
-        gross_amount, refund_amount, discount_amount,
-        payment_mode, category,
-        raw_payload, ingestion_source
-      ) VALUES (
-        ${integration.organization_id}::uuid,
-        ${integration.tenant_id}::uuid,
-        ${integration.id}::uuid,
-        ${tx.providerTxId},
-        'razorpay_pos',
-        ${tx.transactionDate.toISOString().slice(0, 10)}::date,
-        ${tx.transactionTime?.toISOString() ?? null}::timestamptz,
-        ${tx.grossAmount},
-        ${tx.refundAmount},
-        ${tx.discountAmount},
-        ${tx.paymentMode},
-        ${tx.category},
-        ${JSON.stringify(tx.rawPayload)}::jsonb,
-        'webhook'
-      )
-      ON CONFLICT (pos_integration_id, provider_tx_id) DO NOTHING
-    `)
+  // ── 4. Enqueue for async processing ──────────────────────────────────────
+  const jobId = await enqueuePosTransaction("razorpay_pos", integration.id, payload)
 
-    await serviceDb.execute(sql`
-      UPDATE pos_integrations
-      SET last_sync_at = NOW(), sync_status = 'healthy'
-      WHERE id = ${integration.id}::uuid
-    `)
+  if (jobId !== null) {
+    return NextResponse.json({ ok: true, queued: true, jobId })
+  }
+
+  // ── 4b. Fallback: Redis unavailable — process synchronously ──────────────
+  logger.warn("razorpay-pos-webhook: Redis unavailable, falling back to sync ingestion", {
+    integrationId: integration.id,
+  })
+
+  try {
+    const result = await ingestTransaction("razorpay_pos", integration, payload)
+    return NextResponse.json({ ok: true, queued: false, inserted: result.inserted, externalId: result.externalId })
   } catch (err) {
-    console.error("[razorpay-pos-webhook] DB error:", err)
+    logger.error("razorpay-pos-webhook: sync fallback ingest error", {
+      integrationId: integration.id,
+      error: err,
+    })
     return NextResponse.json({ error: "Internal error" }, { status: 500 })
   }
-
-  return NextResponse.json({ ok: true, txId: tx.providerTxId })
 }

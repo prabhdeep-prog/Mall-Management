@@ -14,18 +14,17 @@ export async function POST(request: Request) {
       )
     }
 
-    const posProvider = getPOSProvider(provider as POSProviderKey)
-    const result = await posProvider.testConnection({
-      provider: provider as POSProviderKey,
+    const posProvider = getPOSProvider(provider as POSProviderKey, {
+      apiKey,
       storeId,
       locationId,
-      apiKey,
       syncFrequency: "daily",
     })
+    const result = await posProvider.testConnection()
 
     return NextResponse.json({
-      success: result.success,
-      data: result,
+      success: result.ok,
+      data: { ...result, message: result.ok ? "Connection successful! (demo mode)" : result.error },
     })
   } catch (error) {
     console.error("Error testing POS connection:", error)

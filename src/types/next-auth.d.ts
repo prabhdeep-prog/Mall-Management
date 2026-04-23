@@ -8,6 +8,8 @@ declare module "next-auth" {
     name: string
     role: UserRole
     organizationId: string
+    /** Populated only for tenant portal users */
+    tenantId?: string
   }
 
   interface Session {
@@ -17,6 +19,8 @@ declare module "next-auth" {
       name: string
       role: UserRole
       organizationId: string
+      /** Populated only for tenant portal users */
+      tenantId?: string
     }
   }
 }
@@ -26,6 +30,7 @@ declare module "next-auth/jwt" {
     id: string
     role: UserRole
     organizationId: string
+    /** Populated only for tenant portal users */
+    tenantId?: string
   }
 }
-

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { leases, tenants, properties, posIntegrations } from "@/lib/db/schema"
 import { eq, desc, and, lte, gte } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
 import { getPOSProvider } from "@/lib/pos"
 import type { POSProviderKey } from "@/lib/pos/types"
+import { writeAuditLog, extractRequestMeta } from "@/lib/audit/log"
 
 export async function GET(request: NextRequest) {
   try {
@@ -192,20 +194,18 @@ export async function POST(request: NextRequest) {
     if (isRevShareLease && posProvider && posStoreId && posApiKey) {
       try {
         // Test connection first
-        const posProviderAdapter = getPOSProvider(posProvider as POSProviderKey)
-        const testResult = await posProviderAdapter.testConnection({
-          provider: posProvider as POSProviderKey,
-          storeId: posStoreId,
+        const posProviderAdapter = getPOSProvider(posProvider as POSProviderKey, {
           apiKey: posApiKey,
-          syncFrequency: posSyncFrequency || "daily",
+          storeId: posStoreId,
         })
+        const testResult = await posProviderAdapter.testConnection()
 
-        if (!testResult.success) {
+        if (!testResult.ok) {
           return NextResponse.json({
             success: true,
             data: newLease,
-            message: `Lease created, but POS connection failed: ${testResult.message}. You can connect POS later from Revenue Intelligence.`,
-            posError: testResult.message,
+            message: `Lease created, but POS connection failed: ${testResult.error}. You can connect POS later from Revenue Intelligence.`,
+            posError: testResult.error,
           })
         }
 
@@ -231,6 +231,22 @@ export async function POST(request: NextRequest) {
         console.error("POS integration error (lease was created):", posError)
       }
     }
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
+    const session = await auth()
+    const meta = extractRequestMeta(request)
+    void writeAuditLog({
+      organizationId: session?.user?.organizationId ?? "",
+      action:        "lease.create",
+      entity:        "lease",
+      entityId:      newLease.id,
+      before:        null,
+      after:         newLease as unknown as Record<string, unknown>,
+      changedFields: null,
+      userId:        session?.user?.id,
+      ...meta,
+    })
+    // ── End audit ─────────────────────────────────────────────────────────────
 
     return NextResponse.json({
       success: true,

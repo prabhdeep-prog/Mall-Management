@@ -37,24 +37,14 @@ export async function getRolePermissions(roleName: string): Promise<Permission[]
 // Check if user has a specific permission
 export async function hasPermission(permission: Permission): Promise<boolean> {
   const session = await auth()
-  
-  // Development mode bypass
-  if (process.env.NODE_ENV === "development" && !session?.user) {
-    return true
-  }
-  
+
   if (!session?.user) {
     return false
   }
-  
-  // In development, grant all permissions if role is missing
-  if (process.env.NODE_ENV === "development" && !session.user.role) {
-    return true
-  }
-  
+
   const userRole = session.user.role || "viewer"
   const permissions = await getRolePermissions(userRole)
-  
+
   return permissions.includes(permission)
 }
 
@@ -89,30 +79,17 @@ export async function hasAllPermissions(permissions: Permission[]): Promise<bool
 // Middleware helper for API routes
 export async function requirePermission(permission: Permission): Promise<{ authorized: boolean; error?: string }> {
   const session = await auth()
-  
-  // Development mode bypass - allow all operations when no session
-  // In production, this should be removed or properly secured
-  if (process.env.NODE_ENV === "development" && !session?.user) {
-    console.warn(`[DEV] Bypassing permission check for: ${permission}`)
-    return { authorized: true }
-  }
-  
+
   if (!session?.user) {
     return { authorized: false, error: "Unauthorized" }
   }
-  
-  // In development, also allow if user role is missing (mock session)
-  if (process.env.NODE_ENV === "development" && !session.user.role) {
-    console.warn(`[DEV] User role missing, granting access for: ${permission}`)
-    return { authorized: true }
-  }
-  
+
   const hasAccess = await hasPermission(permission)
-  
+
   if (!hasAccess) {
     return { authorized: false, error: "Forbidden: Insufficient permissions" }
   }
-  
+
   return { authorized: true }
 }
 

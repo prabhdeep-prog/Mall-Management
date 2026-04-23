@@ -160,16 +160,19 @@ export default function AnalyticsPage() {
     setIsLoading(true)
     try {
       const days = TIME_RANGE_TO_DAYS[timeRange] || 30
+      const endDate = new Date(); endDate.setDate(endDate.getDate() - 1)
+      const startDate = new Date(); startDate.setDate(startDate.getDate() - days)
+      const startStr = startDate.toISOString().slice(0, 10)
+      const endStr = endDate.toISOString().slice(0, 10)
       const propParam = selectedProperty ? `&propertyId=${selectedProperty.id}` : ""
 
-      // Fetch revenue intelligence data and tenant/lease counts in parallel
       const [revRes, tenantsRes, leasesRes] = await Promise.all([
-        fetch(`/api/revenue-intelligence?period=${days}${propParam}`),
+        fetch(`/api/analytics/revenue?startDate=${startStr}&endDate=${endStr}&period=day${propParam}`),
         fetch(`/api/tenants${selectedProperty ? `?propertyId=${selectedProperty.id}` : ""}`),
         fetch(`/api/leases${selectedProperty ? `?propertyId=${selectedProperty.id}` : ""}`),
       ])
 
-      const revData = revRes.ok ? await revRes.json() : null
+      const revJson = revRes.ok ? await revRes.json() : null
       const tenantsData = tenantsRes.ok ? await tenantsRes.json() : null
       const leasesData = leasesRes.ok ? await leasesRes.json() : null
 
@@ -185,26 +188,33 @@ export default function AnalyticsPage() {
       })
       const byCategory = Object.entries(catMap).map(([category, count]) => ({ category, count }))
 
-      const revStats = revData?.data?.stats
-      const totalRevenue = revStats?.totalPOSRevenue || 0
-      const revTrend = revStats?.revenueTrend || 0
-      const dailyChart = revData?.data?.dailyChart || []
-      const connectedStores = revStats?.connectedStores || 0
+      // /api/analytics/revenue returns { success: true, data: { kpis, trend, tenants, topTenants, ... } }
+      const revData = revJson?.data
+      const kpis = revData?.kpis
+      const totalRevenue = kpis?.totalRevenue || 0
+      const totalTxn = kpis?.totalTransactions || 0
+      // Count tenants that actually have POS revenue
+      const connectedStores = (revData?.tenants || []).filter((t: any) => t.revenue > 0).length
 
-      // Total transactions from tenant data
-      const tenantRevData = revData?.data?.tenants || []
-      const totalTxn = tenantRevData.reduce((sum: number, t: any) => sum + (t.totalTransactions || 0), 0)
+      // Map trend array { period, revenue, transactions } → dailyChart format
+      const dailyChart = (revData?.trend || []).map((t: any) => ({
+        date: t.period,
+        grossSales: t.revenue,
+        transactions: t.transactions,
+      }))
+
+      // Trend % comparing first-half vs second-half of the period
+      let revTrend = 0
+      if (dailyChart.length >= 4) {
+        const mid = Math.floor(dailyChart.length / 2)
+        const firstHalf = dailyChart.slice(0, mid).reduce((s: number, t: any) => s + t.grossSales, 0)
+        const secondHalf = dailyChart.slice(mid).reduce((s: number, t: any) => s + t.grossSales, 0)
+        if (firstHalf > 0) revTrend = Math.round(((secondHalf - firstHalf) / firstHalf) * 100)
+      }
 
       setData({
-        revenue: {
-          total: totalRevenue,
-          trend: revTrend,
-          dailyChart,
-        },
-        tenants: {
-          total: tenantsList.length,
-          byCategory,
-        },
+        revenue: { total: totalRevenue, trend: revTrend, dailyChart },
+        tenants: { total: tenantsList.length, byCategory },
         leases: {
           total: leasesList.length,
           active: activeLeases.length,
@@ -212,7 +222,9 @@ export default function AnalyticsPage() {
         },
         posConnected: connectedStores,
         totalTransactions: totalTxn,
-      })
+        // Store top tenants for Revenue by Tenant section
+        _tenantRevenue: revData?.topTenants || [],
+      } as any)
     } catch (error) {
       console.error("Error fetching analytics:", error)
     } finally {
@@ -411,7 +423,7 @@ export default function AnalyticsPage() {
                           <div className="h-3 w-3 rounded-full" style={{ backgroundColor: Object.values(CATEGORY_COLORS)[i % Object.values(CATEGORY_COLORS).length] }} />
                           <span className="text-sm font-medium">{t.name}</span>
                         </div>
-                        <span className="text-sm font-bold">{formatCurrency(t.grossSales)}</span>
+                        <span className="text-sm font-bold">{formatCurrency(t.revenue ?? t.grossSales ?? 0)}</span>
                       </div>
                     )) || (
                       <p className="text-sm text-muted-foreground">Revenue data available on Revenue Intelligence page</p>

@@ -10,18 +10,22 @@ export interface Property {
   status: string | null
 }
 
+// How long before cached properties are considered stale (5 minutes)
+const STALE_TIME = 5 * 60 * 1000
+
 interface PropertyState {
   properties: Property[]
   selectedProperty: Property | null
   isLoading: boolean
   error: string | null
-  
+  lastFetchedAt: number | null
+
   // Actions
   setProperties: (properties: Property[]) => void
   setSelectedProperty: (property: Property | null) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
-  fetchProperties: () => Promise<void>
+  fetchProperties: (force?: boolean) => Promise<void>
 }
 
 export const usePropertyStore = create<PropertyState>()(
@@ -31,27 +35,43 @@ export const usePropertyStore = create<PropertyState>()(
       selectedProperty: null,
       isLoading: false,
       error: null,
+      lastFetchedAt: null,
 
       setProperties: (properties) => set({ properties }),
-      
+
       setSelectedProperty: (property) => set({ selectedProperty: property }),
-      
+
       setLoading: (isLoading) => set({ isLoading }),
-      
+
       setError: (error) => set({ error }),
 
-      fetchProperties: async () => {
+      fetchProperties: async (force = false) => {
+        const state = get()
+
+        // Skip fetch if data is fresh and not forced
+        if (
+          !force &&
+          state.properties.length > 0 &&
+          state.lastFetchedAt &&
+          Date.now() - state.lastFetchedAt < STALE_TIME
+        ) {
+          return
+        }
+
+        // Prevent concurrent fetches
+        if (state.isLoading) return
+
         set({ isLoading: true, error: null })
         try {
-          const response = await fetch("/api/properties?refresh=true")
+          const response = await fetch("/api/properties")
           if (!response.ok) {
             throw new Error("Failed to fetch properties")
           }
           const data = await response.json()
           const properties = data.data || data || []
-          
-          set({ properties, isLoading: false })
-          
+
+          set({ properties, isLoading: false, lastFetchedAt: Date.now() })
+
           // Auto-select first property if none selected
           const currentSelected = get().selectedProperty
           if (!currentSelected && properties.length > 0) {
@@ -68,17 +88,17 @@ export const usePropertyStore = create<PropertyState>()(
           }
         } catch (error) {
           console.error("Error fetching properties:", error)
-          set({ 
+          set({
             error: error instanceof Error ? error.message : "Failed to fetch properties",
-            isLoading: false 
+            isLoading: false
           })
         }
       },
     }),
     {
       name: "property-store",
-      partialize: (state) => ({ 
-        selectedProperty: state.selectedProperty 
+      partialize: (state) => ({
+        selectedProperty: state.selectedProperty
       }),
     }
   )

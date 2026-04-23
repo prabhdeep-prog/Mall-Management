@@ -51,7 +51,18 @@ import {
   Users,
   Lock,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { useToast } from "@/components/ui/use-toast"
 import { PermissionGate, PERMISSIONS } from "@/components/auth/permission-gate"
 import { usePermissions } from "@/hooks/use-permissions"
@@ -165,6 +176,8 @@ export default function RolesPage() {
   const [roles, setRoles] = React.useState<Role[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog states
   const [addRoleDialogOpen, setAddRoleDialogOpen] = React.useState(false)
@@ -383,6 +396,16 @@ export default function RolesPage() {
     }
     return true
   })
+
+  const totalPages = Math.ceil(filteredRoles.length / pageSize)
+  const paginatedRoles = filteredRoles.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
 
   const stats = {
     total: roles.length,
@@ -603,91 +626,131 @@ export default function RolesPage() {
                 </p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Permissions</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredRoles.map((role) => (
-                    <TableRow key={role.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Shield className="h-4 w-4 text-muted-foreground" />
-                          <Badge className={roleColors[role.name] || "bg-gray-100 text-gray-800"}>
-                            {formatRoleName(role.name)}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-[300px]">
-                        <span className="text-sm text-muted-foreground line-clamp-2">
-                          {role.description || "—"}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {role.permissions?.length || 0} permissions
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {role.isDefault ? (
-                          <Badge variant="secondary" className="gap-1">
-                            <Lock className="h-3 w-3" />
-                            System
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="gap-1">
-                            <Check className="h-3 w-3" />
-                            Custom
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={() => openViewDialog(role)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View Permissions
-                            </DropdownMenuItem>
-                            {!role.isDefault && isAdmin && (
-                              <>
-                                <DropdownMenuItem onClick={() => openEditDialog(role)}>
-                                  <Edit className="mr-2 h-4 w-4" />
-                                  Edit Role
-                                </DropdownMenuItem>
-                                {isSuperAdmin && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                      onClick={() => openDeleteDialog(role)}
-                                      className="text-red-600"
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" />
-                                      Delete Role
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                              </>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Role</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Permissions</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedRoles.map((role) => (
+                      <TableRow key={role.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Shield className="h-4 w-4 text-muted-foreground" />
+                            <Badge className={roleColors[role.name] || "bg-gray-100 text-gray-800"}>
+                              {formatRoleName(role.name)}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="max-w-[300px]">
+                          <span className="text-sm text-muted-foreground line-clamp-2">
+                            {role.description || "—"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {role.permissions?.length || 0} permissions
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {role.isDefault ? (
+                            <Badge variant="secondary" className="gap-1">
+                              <Lock className="h-3 w-3" />
+                              System
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="gap-1">
+                              <Check className="h-3 w-3" />
+                              Custom
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => openViewDialog(role)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View Permissions
+                              </DropdownMenuItem>
+                              {!role.isDefault && isAdmin && (
+                                <>
+                                  <DropdownMenuItem onClick={() => openEditDialog(role)}>
+                                    <Edit className="mr-2 h-4 w-4" />
+                                    Edit Role
+                                  </DropdownMenuItem>
+                                  {isSuperAdmin && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onClick={() => openDeleteDialog(role)}
+                                        className="text-red-600"
+                                      >
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete Role
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {filteredRoles.length > 0 && (
+                  <div className="flex items-center justify-between border-t pt-4 mt-4 px-4 pb-4">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span>
+                        Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredRoles.length)} of {filteredRoles.length}
+                      </span>
+                      <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                        <SelectTrigger className="h-8 w-[70px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="20">20</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span>per page</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                        <ChevronsLeft className="h-4 w-4" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="px-3 text-sm font-medium">
+                        {currentPage} / {totalPages || 1}
+                      </span>
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                        <ChevronsRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>

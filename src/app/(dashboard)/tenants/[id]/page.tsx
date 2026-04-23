@@ -81,7 +81,16 @@ import {
   Wifi,
   WifiOff,
   Zap,
+  Bell,
+  Send,
+  ShoppingCart,
+  TrendingUp,
+  Activity,
+  ArrowUpRight,
+  ArrowDownRight,
+  FileSignature,
 } from "lucide-react"
+import Link from "next/link"
 import { cn, formatCurrency } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
 import { z } from "zod"
@@ -153,18 +162,22 @@ interface Lease {
   id: string
   unitNumber: string
   floor: number | null
+  zone: string | null
   areaSqft: string | null
   baseRent: string | null
+  revenueSharePercentage: string | null
   maintenanceCharges: string | null
   camCharges: string | null
   securityDeposit: string | null
   startDate: string
   endDate: string
   status: string | null
+  rentEscalationPercentage: string | null
   escalationRate: string | null
   escalationFrequency: string | null
   leaseType: string | null
   terms: LeaseTerms | null
+  property: { id: string; name: string; code: string } | null
 }
 
 interface Invoice {
@@ -208,6 +221,33 @@ interface TenantDetails extends Tenant {
     open: number
     resolved: number
   }
+}
+
+interface POSIntegration {
+  id: string
+  provider: string
+  storeId: string | null
+  locationId: string | null
+  status: string | null
+  syncFrequency: string | null
+  lastSyncAt: string | null
+  lastSyncStatus: string | null
+  totalTransactionsSynced: number | null
+  revenueSharePercentage: string | null
+  createdAt: string
+}
+
+interface POSSale {
+  id: string
+  salesDate: string
+  grossSales: string
+  netSales: string
+  refunds: string
+  discounts: string
+  transactionCount: number | null
+  avgTransactionValue: string | null
+  categoryBreakdown: Record<string, number> | null
+  source: string | null
 }
 
 // ============ Constants ============
@@ -416,6 +456,9 @@ export default function TenantDetailsPage() {
   const [viewWorkOrderDialogOpen, setViewWorkOrderDialogOpen] = React.useState(false)
   const [createInvoiceDialogOpen, setCreateInvoiceDialogOpen] = React.useState(false)
   const [createWorkOrderDialogOpen, setCreateWorkOrderDialogOpen] = React.useState(false)
+  const [notifyDialogOpen, setNotifyDialogOpen] = React.useState(false)
+  const [notifyForm, setNotifyForm] = React.useState({ type: "announcement", title: "", content: "" })
+  const [notifySending, setNotifySending] = React.useState(false)
   
   // Selected items for view dialogs
   const [selectedLease, setSelectedLease] = React.useState<Lease | null>(null)
@@ -473,6 +516,12 @@ export default function TenantDetailsPage() {
   const [posTestMessage, setPosTestMessage] = React.useState("")
   const isRevShareLease = leaseForm.leaseType === "revenue_share" || leaseForm.leaseType === "hybrid" || leaseForm.leaseType === "minimum_guarantee"
 
+  // POS Sales tab state
+  const [posIntegration, setPosIntegration] = React.useState<POSIntegration | null>(null)
+  const [posSales, setPosSales] = React.useState<POSSale[]>([])
+  const [posLoading, setPosLoading] = React.useState(false)
+  const [posLoaded, setPosLoaded] = React.useState(false)
+
   // Fetch tenant data
   const fetchTenantData = React.useCallback(async (showRefreshSpinner = false) => {
     if (!tenantId) return
@@ -505,6 +554,33 @@ export default function TenantDetailsPage() {
   React.useEffect(() => {
     fetchTenantData()
   }, [fetchTenantData])
+
+  // Fetch POS data for this tenant
+  const fetchPOSData = React.useCallback(async () => {
+    if (!tenantId || posLoaded) return
+    setPosLoading(true)
+    try {
+      // Fetch integration
+      const [intRes, salesRes] = await Promise.all([
+        fetch(`/api/pos/connect?tenantId=${tenantId}`),
+        fetch(`/api/pos/sales?tenantId=${tenantId}`),
+      ])
+      if (intRes.ok) {
+        const intJson = await intRes.json()
+        const intList = intJson.data || intJson
+        setPosIntegration(Array.isArray(intList) ? intList[0] || null : intList || null)
+      }
+      if (salesRes.ok) {
+        const salesJson = await salesRes.json()
+        setPosSales(salesJson.data || [])
+      }
+      setPosLoaded(true)
+    } catch (e) {
+      console.error("POS data fetch error:", e)
+    } finally {
+      setPosLoading(false)
+    }
+  }, [tenantId, posLoaded])
 
   // Open edit dialog and populate form
   const handleEditTenant = () => {
@@ -1061,6 +1137,20 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
             <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
             Refresh
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => window.open(`/tenant/dashboard`, "_blank")}
+          >
+            <ExternalLink className="h-4 w-4 mr-2" />
+            View Portal
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setNotifyDialogOpen(true)}
+          >
+            <Bell className="h-4 w-4 mr-2" />
+            Notify
+          </Button>
           <Button onClick={handleEditTenant} className="bg-blue-600 hover:bg-blue-700">
             <Edit className="h-4 w-4 mr-2" />
             Edit Tenant
@@ -1151,6 +1241,9 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
           </TabsTrigger>
           <TabsTrigger value="analytics" className="gap-2">
             <BarChart3 className="h-4 w-4" /> Analytics
+          </TabsTrigger>
+          <TabsTrigger value="pos" className="gap-2" onClick={fetchPOSData}>
+            <ShoppingCart className="h-4 w-4" /> Sales & POS
           </TabsTrigger>
         </TabsList>
 
@@ -1447,73 +1540,144 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
 
         {/* Lease Tab */}
         <TabsContent value="lease">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>Lease Agreements</CardTitle>
-                <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600" onClick={() => setCreateLeaseDialogOpen(true)}>
-                  <Plus className="h-4 w-4" /> Create Lease
-                </Button>
+          <div className="space-y-4">
+            {/* Active Lease Summary Card */}
+            {tenant.activeLease && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card className="bg-gradient-to-br from-emerald-50 to-white border-emerald-100">
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1"><MapPin className="h-3 w-3" /> Unit / Floor</p>
+                    <p className="text-lg font-bold text-emerald-700">
+                      {tenant.activeLease.unitNumber}
+                      {tenant.activeLease.floor != null && ` · Flr ${tenant.activeLease.floor}`}
+                      {tenant.activeLease.zone && ` · ${tenant.activeLease.zone}`}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-blue-50 to-white border-blue-100">
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1"><IndianRupee className="h-3 w-3" /> Monthly Rent</p>
+                    <p className="text-lg font-bold text-blue-700">{formatCurrency(parseFloat(tenant.activeLease.baseRent || "0"))}</p>
+                    {tenant.activeLease.revenueSharePercentage && (
+                      <p className="text-xs text-muted-foreground mt-0.5">+ {tenant.activeLease.revenueSharePercentage}% rev-share</p>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-purple-50 to-white border-purple-100">
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1"><Calendar className="h-3 w-3" /> Lease Period</p>
+                    <p className="text-sm font-semibold text-purple-700">
+                      {format(new Date(tenant.activeLease.startDate), "dd MMM yy")} –<br />
+                      {format(new Date(tenant.activeLease.endDate), "dd MMM yy")}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-amber-50 to-white border-amber-100">
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1"><FileSignature className="h-3 w-3" /> Lease Type</p>
+                    <p className="text-sm font-semibold text-amber-700 capitalize">
+                      {(tenant.activeLease.leaseType || "fixed_rent").replace(/_/g, " ")}
+                    </p>
+                    {(tenant.activeLease.rentEscalationPercentage || tenant.activeLease.escalationRate) && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {tenant.activeLease.rentEscalationPercentage || tenant.activeLease.escalationRate}% escalation
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
-            </CardHeader>
-            <CardContent>
-              {tenant.leases.length === 0 ? (
-                <div className="text-center py-12">
-                  <FileText className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold">No Leases Yet</h3>
-                  <p className="text-muted-foreground mb-4">Create a lease agreement for this tenant.</p>
+            )}
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Lease Agreements</CardTitle>
                   <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600" onClick={() => setCreateLeaseDialogOpen(true)}>
-                    <Plus className="h-4 w-4" /> Create First Lease
+                    <Plus className="h-4 w-4" /> Create Lease
                   </Button>
                 </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Unit</TableHead>
-                      <TableHead>Floor</TableHead>
-                      <TableHead>Area (sq.ft)</TableHead>
-                      <TableHead>Base Rent</TableHead>
-                      <TableHead>Duration</TableHead>
-                      <TableHead>Escalation</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {tenant.leases.map((lease) => (
-                      <TableRow key={lease.id}>
-                        <TableCell className="font-medium">{lease.unitNumber}</TableCell>
-                        <TableCell>{lease.floor ?? "Ground"}</TableCell>
-                        <TableCell>{lease.areaSqft ? parseFloat(lease.areaSqft).toLocaleString() : "—"}</TableCell>
-                        <TableCell>{formatCurrency(parseFloat(lease.baseRent || "0"))}</TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {format(new Date(lease.startDate), "dd MMM yyyy")} -<br />
-                            {format(new Date(lease.endDate), "dd MMM yyyy")}
-                          </div>
-                        </TableCell>
-                        <TableCell>{lease.escalationRate ? `${lease.escalationRate}%` : "—"}</TableCell>
-                        <TableCell>
-                          <Badge className={cn(statusColors[lease.status || "active"])}>{lease.status || "active"}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => handleViewLease(lease)}>
-                              <Eye className="h-4 w-4 mr-1" /> View
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleGenerateLeaseDocument(lease)}>
-                              <FileText className="h-4 w-4 mr-1" /> Generate
-                            </Button>
-                          </div>
-                        </TableCell>
+              </CardHeader>
+              <CardContent>
+                {tenant.leases.length === 0 ? (
+                  <div className="text-center py-12">
+                    <FileText className="h-12 w-12 text-muted-foreground/50 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold">No Leases Yet</h3>
+                    <p className="text-muted-foreground mb-4">Create a lease agreement for this tenant.</p>
+                    <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600" onClick={() => setCreateLeaseDialogOpen(true)}>
+                      <Plus className="h-4 w-4" /> Create First Lease
+                    </Button>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Property / Unit</TableHead>
+                        <TableHead>Lease Type</TableHead>
+                        <TableHead>Rent</TableHead>
+                        <TableHead>Rev-Share</TableHead>
+                        <TableHead>Start</TableHead>
+                        <TableHead>End</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {tenant.leases.map((lease) => (
+                        <TableRow key={lease.id}>
+                          <TableCell>
+                            <div className="font-medium">{lease.unitNumber}</div>
+                            {lease.property && (
+                              <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                <Building2 className="h-3 w-3" />{lease.property.name}
+                              </div>
+                            )}
+                            {(lease.floor != null || lease.zone) && (
+                              <div className="text-xs text-muted-foreground">
+                                {lease.floor != null && `Floor ${lease.floor}`}
+                                {lease.floor != null && lease.zone && " · "}
+                                {lease.zone}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="capitalize">
+                            {(lease.leaseType || "fixed_rent").replace(/_/g, " ")}
+                          </TableCell>
+                          <TableCell>{formatCurrency(parseFloat(lease.baseRent || "0"))}</TableCell>
+                          <TableCell>
+                            {lease.revenueSharePercentage
+                              ? <span className="font-medium text-emerald-700">{lease.revenueSharePercentage}%</span>
+                              : <span className="text-muted-foreground">—</span>
+                            }
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {format(new Date(lease.startDate), "dd MMM yyyy")}
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">
+                            {format(new Date(lease.endDate), "dd MMM yyyy")}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={cn(statusColors[lease.status || "active"])}>{lease.status || "active"}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => handleViewLease(lease)}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Link href={`/leases/${lease.id}`}>
+                                <Button variant="ghost" size="sm" title="Open full lease detail">
+                                  <ExternalLink className="h-4 w-4" />
+                                </Button>
+                              </Link>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* Financials Tab */}
@@ -1768,6 +1932,283 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* ── Sales & POS Tab ── */}
+        <TabsContent value="pos">
+          {posLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* POS Integration Card */}
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-3">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Zap className="h-5 w-5 text-primary" /> POS Integration
+                    </CardTitle>
+                    <CardDescription>Point-of-sale connection status for revenue tracking</CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => router.push(`/pos-simulator?tenantId=${tenantId}`)}
+                  >
+                    <ExternalLink className="h-4 w-4" /> Open POS Simulator
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  {posIntegration ? (
+                    <div className="space-y-4">
+                      <div className={cn(
+                        "flex items-center gap-3 p-3 rounded-lg border",
+                        posIntegration.status === "connected"
+                          ? "bg-green-50 border-green-200"
+                          : "bg-yellow-50 border-yellow-200"
+                      )}>
+                        {posIntegration.status === "connected"
+                          ? <Wifi className="h-5 w-5 text-green-600 flex-shrink-0" />
+                          : <WifiOff className="h-5 w-5 text-yellow-600 flex-shrink-0" />}
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">
+                            {posIntegration.status === "connected" ? "Connected" : "Disconnected"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Provider: <span className="font-semibold capitalize">{posIntegration.provider}</span>
+                            {posIntegration.storeId && ` · Store ID: ${posIntegration.storeId}`}
+                          </p>
+                        </div>
+                        <Badge className={posIntegration.status === "connected" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}>
+                          {posIntegration.status === "connected" ? "Live" : "Offline"}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="rounded-lg border p-3 space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Sync Frequency</p>
+                          <p className="text-sm font-medium capitalize">{(posIntegration.syncFrequency || "daily").replace("_", " ")}</p>
+                        </div>
+                        <div className="rounded-lg border p-3 space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Last Synced</p>
+                          <p className="text-sm font-medium">
+                            {posIntegration.lastSyncAt
+                              ? new Date(posIntegration.lastSyncAt).toLocaleDateString("en-IN")
+                              : "Never"}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border p-3 space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Total Transactions</p>
+                          <p className="text-sm font-medium">{(posIntegration.totalTransactionsSynced || 0).toLocaleString()}</p>
+                        </div>
+                        <div className="rounded-lg border p-3 space-y-0.5">
+                          <p className="text-xs text-muted-foreground">Revenue Share</p>
+                          <p className="text-sm font-medium">
+                            {posIntegration.revenueSharePercentage
+                              ? `${posIntegration.revenueSharePercentage}%`
+                              : tenant?.activeLease?.leaseType === "revenue_share" ? "Rev-Share" : "Fixed"}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 py-8 text-center">
+                      <WifiOff className="h-10 w-10 text-muted-foreground/40" />
+                      <div>
+                        <p className="font-medium text-muted-foreground">No POS integration configured</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Connect a POS system when creating a revenue-share lease, or use the POS simulator to test.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 mt-1"
+                        onClick={() => router.push("/pos-simulator")}
+                      >
+                        <ShoppingCart className="h-4 w-4" /> Open POS Simulator
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Sales Summary */}
+              {posSales.length > 0 && (() => {
+                const totalGross = posSales.reduce((s, r) => s + parseFloat(r.grossSales || "0"), 0)
+                const totalNet   = posSales.reduce((s, r) => s + parseFloat(r.netSales || "0"), 0)
+                const totalTxns  = posSales.reduce((s, r) => s + (r.transactionCount || 0), 0)
+                const totalRefunds = posSales.reduce((s, r) => s + parseFloat(r.refunds || "0"), 0)
+                const avgTxn = totalTxns > 0 ? totalNet / totalTxns : 0
+                const latest = [...posSales].sort((a, b) => b.salesDate.localeCompare(a.salesDate))[0]
+                const prev   = posSales.length > 1 ? posSales[posSales.length - 2] : null
+                const trend  = prev ? (parseFloat(latest.grossSales) - parseFloat(prev.grossSales)) : 0
+                return (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <Card className="border-0 shadow-sm bg-gradient-to-br from-blue-50 to-white">
+                        <CardContent className="pt-4 pb-3">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><TrendingUp className="h-3 w-3" /> Total Gross Sales</p>
+                          <p className="text-2xl font-bold mt-1">{formatCurrency(totalGross)}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{posSales.length} days tracked</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-0 shadow-sm bg-gradient-to-br from-green-50 to-white">
+                        <CardContent className="pt-4 pb-3">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><IndianRupee className="h-3 w-3" /> Net Revenue</p>
+                          <p className="text-2xl font-bold mt-1">{formatCurrency(totalNet)}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">After refunds & discounts</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-0 shadow-sm bg-gradient-to-br from-purple-50 to-white">
+                        <CardContent className="pt-4 pb-3">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Activity className="h-3 w-3" /> Transactions</p>
+                          <p className="text-2xl font-bold mt-1">{totalTxns.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Avg {formatCurrency(avgTxn)} / txn</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="border-0 shadow-sm bg-gradient-to-br from-rose-50 to-white">
+                        <CardContent className="pt-4 pb-3">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Receipt className="h-3 w-3" /> Refunds</p>
+                          <p className="text-2xl font-bold mt-1">{formatCurrency(totalRefunds)}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {totalGross > 0 ? ((totalRefunds / totalGross) * 100).toFixed(1) : "0"}% refund rate
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* Latest Day Highlight */}
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                          <Calendar className="h-4 w-4" /> Latest Sales Day — {new Date(latest.salesDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                          {trend !== 0 && (
+                            <span className={cn("flex items-center gap-0.5 text-xs font-semibold ml-auto", trend > 0 ? "text-green-600" : "text-red-600")}>
+                              {trend > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                              {Math.abs(trend / parseFloat(prev!.grossSales) * 100).toFixed(1)}% vs prev day
+                            </span>
+                          )}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <p className="text-muted-foreground">Gross Sales</p>
+                            <p className="font-semibold text-base">{formatCurrency(parseFloat(latest.grossSales))}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Transactions</p>
+                            <p className="font-semibold text-base">{(latest.transactionCount || 0).toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Avg Txn Value</p>
+                            <p className="font-semibold text-base">{formatCurrency(parseFloat(latest.avgTransactionValue || "0"))}</p>
+                          </div>
+                        </div>
+
+                        {/* Category Breakdown */}
+                        {latest.categoryBreakdown && Object.keys(latest.categoryBreakdown).length > 0 && (
+                          <div className="mt-4">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Category Breakdown</p>
+                            <div className="space-y-2">
+                              {Object.entries(latest.categoryBreakdown)
+                                .sort(([, a], [, b]) => b - a)
+                                .slice(0, 5)
+                                .map(([cat, amount]) => {
+                                  const pct = totalGross > 0 ? (amount / parseFloat(latest.grossSales)) * 100 : 0
+                                  return (
+                                    <div key={cat}>
+                                      <div className="flex justify-between text-xs mb-0.5">
+                                        <span className="capitalize text-muted-foreground">{cat.replace(/_/g, " ")}</span>
+                                        <span className="font-medium">{formatCurrency(amount)} <span className="text-muted-foreground">({pct.toFixed(0)}%)</span></span>
+                                      </div>
+                                      <div className="h-1.5 rounded-full bg-gray-100">
+                                        <div className="h-full rounded-full bg-primary/70" style={{ width: `${Math.max(pct, 2)}%` }} />
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Sales History Table */}
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2">
+                          <BarChart3 className="h-5 w-5 text-primary" /> Sales History
+                        </CardTitle>
+                        <CardDescription>Daily POS sales records (most recent first)</CardDescription>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead className="text-right">Gross Sales</TableHead>
+                              <TableHead className="text-right">Net Sales</TableHead>
+                              <TableHead className="text-right">Transactions</TableHead>
+                              <TableHead className="text-right">Avg Txn</TableHead>
+                              <TableHead className="text-right">Refunds</TableHead>
+                              <TableHead>Source</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {[...posSales]
+                              .sort((a, b) => b.salesDate.localeCompare(a.salesDate))
+                              .slice(0, 30)
+                              .map((sale) => (
+                                <TableRow key={sale.id}>
+                                  <TableCell className="font-medium">
+                                    {new Date(sale.salesDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                                  </TableCell>
+                                  <TableCell className="text-right font-semibold">{formatCurrency(parseFloat(sale.grossSales || "0"))}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(parseFloat(sale.netSales || "0"))}</TableCell>
+                                  <TableCell className="text-right">{(sale.transactionCount || 0).toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">{sale.avgTransactionValue ? formatCurrency(parseFloat(sale.avgTransactionValue)) : "—"}</TableCell>
+                                  <TableCell className="text-right text-red-600">{parseFloat(sale.refunds || "0") > 0 ? formatCurrency(parseFloat(sale.refunds)) : "—"}</TableCell>
+                                  <TableCell>
+                                    <Badge variant="outline" className="text-xs capitalize">{sale.source || "pos_api"}</Badge>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  </>
+                )
+              })()}
+
+              {/* No Sales Data */}
+              {!posLoading && posSales.length === 0 && (
+                <Card>
+                  <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                    <ShoppingCart className="h-12 w-12 text-muted-foreground/30" />
+                    <div>
+                      <p className="font-medium">No sales data yet</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Use the POS Simulator to enter daily sales data for this tenant.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 mt-1"
+                      onClick={() => router.push("/pos-simulator")}
+                    >
+                      <Zap className="h-4 w-4" /> Open POS Simulator
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
 
@@ -2344,6 +2785,51 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
                     </p>
                   </div>
 
+                  {/* Dev / Demo Sample Banner */}
+                  <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-1.5 text-sm font-semibold text-amber-800">
+                          <Zap className="h-3.5 w-3.5" /> Dev / Demo Mode
+                        </div>
+                        <p className="text-xs text-amber-700 mt-0.5">
+                          Auto-fills sample credentials linked to the local POS Simulator. After creating the lease, open the Simulator to push test sales for this tenant.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="flex-shrink-0 gap-1.5 border-amber-400 text-amber-800 hover:bg-amber-100 text-xs"
+                        onClick={() => {
+                          setLeaseForm({
+                            ...leaseForm,
+                            posProvider: "square",
+                            posStoreId: `sq_dev-${tenantId.slice(0, 8)}`,
+                            posApiKey: "dev-simulator-key",
+                            posSyncFrequency: "real_time",
+                          })
+                          setPosTestStatus("idle")
+                          setPosTestMessage("")
+                        }}
+                      >
+                        <ShoppingCart className="h-3.5 w-3.5" /> Use Dev Sample
+                      </Button>
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-700">
+                      <ExternalLink className="h-3 w-3" />
+                      After saving, test at{" "}
+                      <a
+                        href="/pos-simulator"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline font-medium hover:text-amber-900"
+                      >
+                        localhost:3000/pos-simulator
+                      </a>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium">POS Provider</label>
                     <Select value={leaseForm.posProvider} onValueChange={(v) => { setLeaseForm({...leaseForm, posProvider: v}); setPosTestStatus("idle"); }}>
@@ -2848,6 +3334,105 @@ Generated on: ${format(new Date(), "dd MMM yyyy HH:mm")}
             >
               {isSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Wrench className="h-4 w-4 mr-2" />}
               Create Work Order
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Send Notification Dialog ──────────────────────────────────────── */}
+      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Notification to Tenant</DialogTitle>
+            <DialogDescription>
+              This notification will appear in the tenant&apos;s portal.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type</label>
+              <Select
+                value={notifyForm.type}
+                onValueChange={(v) => {
+                  const titles: Record<string, string> = {
+                    payment_reminder: "Payment Reminder",
+                    announcement: "Announcement",
+                    maintenance_update: "Maintenance Update",
+                    lease_notice: "Lease Notice",
+                    custom: "",
+                  }
+                  setNotifyForm({ ...notifyForm, type: v, title: titles[v] ?? "" })
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="payment_reminder">Payment Reminder</SelectItem>
+                  <SelectItem value="announcement">Announcement</SelectItem>
+                  <SelectItem value="maintenance_update">Maintenance Update</SelectItem>
+                  <SelectItem value="lease_notice">Lease Notice</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                placeholder="Notification title..."
+                value={notifyForm.title}
+                onChange={(e) => setNotifyForm({ ...notifyForm, title: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Message</label>
+              <Textarea
+                placeholder="Write your message to the tenant..."
+                rows={4}
+                value={notifyForm.content}
+                onChange={(e) => setNotifyForm({ ...notifyForm, content: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNotifyDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!notifyForm.title.trim() || !notifyForm.content.trim() || !tenant) return
+                setNotifySending(true)
+                try {
+                  const res = await fetch("/api/notifications", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      recipientId: tenant.id,
+                      type: notifyForm.type,
+                      title: notifyForm.title,
+                      content: notifyForm.content,
+                    }),
+                  })
+                  if (res.ok) {
+                    toast({ title: "Notification sent", description: `Sent to ${tenant.businessName}` })
+                    setNotifyDialogOpen(false)
+                    setNotifyForm({ type: "announcement", title: "", content: "" })
+                  } else {
+                    toast({ title: "Failed to send", variant: "destructive" })
+                  }
+                } catch {
+                  toast({ title: "Failed to send", variant: "destructive" })
+                }
+                setNotifySending(false)
+              }}
+              disabled={notifySending || !notifyForm.title.trim() || !notifyForm.content.trim()}
+            >
+              {notifySending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              Send Notification
             </Button>
           </DialogFooter>
         </DialogContent>

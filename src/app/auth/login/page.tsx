@@ -30,6 +30,7 @@ function LoginPageContent() {
   const {
     register,
     handleSubmit,
+    setValue,
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -61,10 +62,8 @@ function LoginPageContent() {
 
   // Demo credentials for testing
   const fillDemoCredentials = () => {
-    const emailInput = document.querySelector('input[name="email"]') as HTMLInputElement
-    const passwordInput = document.querySelector('input[name="password"]') as HTMLInputElement
-    if (emailInput) emailInput.value = "admin@metromall.com"
-    if (passwordInput) passwordInput.value = "demo123456"
+    setValue("email", "admin@metromall.com", { shouldValidate: true })
+    setValue("password", "demo123456", { shouldValidate: true })
   }
 
   return (

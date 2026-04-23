@@ -46,22 +46,24 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   // Derive active workspace from current URL on mount and navigation
   const detectedWorkspace = workspaceFromPathname(pathname)
 
-  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>(
-    () => {
-      if (typeof window === "undefined") return detectedWorkspace
-      const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY)
-      return (stored as WorkspaceId) ?? detectedWorkspace
-    }
-  )
-
-  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(() => {
-    if (typeof window === "undefined") return true
-    const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY)
-    return stored === null ? true : stored === "true"
-  })
+  // Initial state MUST match between server and client to avoid hydration
+  // mismatches. We seed with the URL-derived workspace and the default sidebar
+  // state, then sync the persisted values from localStorage in a post-mount
+  // effect below.
+  const [activeWorkspace, setActiveWorkspaceState] = React.useState<WorkspaceId>(detectedWorkspace)
+  const [isSidebarOpen, setSidebarOpenState] = React.useState<boolean>(true)
 
   const [isPaletteOpen, setPaletteOpen] = React.useState(false)
   const [paletteInitialQuery, setPaletteInitialQuery] = React.useState("")
+
+  // Hydrate persisted preferences from localStorage after mount (client-only)
+  React.useEffect(() => {
+    const storedSidebar = localStorage.getItem(SIDEBAR_STORAGE_KEY)
+    if (storedSidebar !== null) setSidebarOpenState(storedSidebar === "true")
+
+    const storedWorkspace = localStorage.getItem(WORKSPACE_STORAGE_KEY) as WorkspaceId | null
+    if (storedWorkspace) setActiveWorkspaceState(storedWorkspace)
+  }, [])
 
   // Auto-sync workspace from pathname changes (browser navigation)
   React.useEffect(() => {

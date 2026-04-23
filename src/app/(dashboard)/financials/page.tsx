@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -60,6 +60,9 @@ import {
   Eye,
   Banknote,
   XCircle,
+  Receipt,
+  Landmark,
+  ArrowDownLeft,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { useToast } from "@/components/ui/use-toast"
@@ -93,6 +96,31 @@ interface Invoice {
   } | null
 }
 
+interface Payment {
+  id: string
+  amount: string
+  paymentDate: string
+  paymentMethod: string | null
+  referenceNumber: string | null
+  bankName: string | null
+  reconciled: boolean | null
+  notes: string | null
+  createdAt: string
+  invoice: { id: string; invoiceNumber: string; invoiceType: string; totalAmount: string; status: string } | null
+  lease: { id: string; unitNumber: string; propertyId: string } | null
+  tenant: { id: string; businessName: string; contactPerson: string | null } | null
+}
+
+const paymentMethodLabels: Record<string, string> = {
+  bank_transfer: "Bank Transfer",
+  upi:           "UPI",
+  cheque:        "Cheque",
+  cash:          "Cash",
+  card:          "Card",
+  neft:          "NEFT",
+  rtgs:          "RTGS",
+}
+
 const statusConfig: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
   pending: { color: "bg-yellow-100 text-yellow-700", label: "Pending", icon: <Clock className="h-3 w-3" /> },
   paid: { color: "bg-green-100 text-green-700", label: "Paid", icon: <CheckCircle2 className="h-3 w-3" /> },
@@ -111,10 +139,21 @@ const invoiceTypeLabels: Record<string, string> = {
 
 function FinancialsPageContent() {
   const { toast } = useToast()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const { selectedProperty } = usePropertyStore()
   const tenantIdFilter = searchParams.get("tenantId")
+  const activeTab = (searchParams.get("tab") || "invoices") as "invoices" | "payments"
+
+  const setTab = (tab: "invoices" | "payments") => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", tab)
+    router.push(`/financials?${params.toString()}`)
+  }
+
   const [invoices, setInvoices] = React.useState<Invoice[]>([])
+  const [payments, setPayments] = React.useState<Payment[]>([])
+  const [paymentsLoading, setPaymentsLoading] = React.useState(false)
   const [isLoading, setIsLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
@@ -208,6 +247,28 @@ function FinancialsPageContent() {
   React.useEffect(() => {
     fetchInvoices()
   }, [fetchInvoices])
+
+  const fetchPayments = React.useCallback(async () => {
+    setPaymentsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (tenantIdFilter) params.set("tenantId", tenantIdFilter)
+      if (selectedProperty) params.set("propertyId", selectedProperty.id)
+      const res = await fetch(`/api/payments?${params.toString()}`)
+      if (!res.ok) throw new Error("Failed to fetch payments")
+      const result = await res.json()
+      setPayments(result.data || [])
+    } catch (err) {
+      console.error("Error fetching payments:", err)
+      toast({ title: "Error", description: "Failed to load payments.", variant: "destructive" })
+    } finally {
+      setPaymentsLoading(false)
+    }
+  }, [tenantIdFilter, selectedProperty, toast])
+
+  React.useEffect(() => {
+    if (activeTab === "payments") fetchPayments()
+  }, [activeTab, fetchPayments])
 
   // Create invoice handler
   const handleCreateInvoice = async (e: React.FormEvent) => {
@@ -529,6 +590,31 @@ function FinancialsPageContent() {
         </div>
       </div>
 
+      {/* Tab switcher */}
+      <div className="flex gap-1 border-b">
+        {([
+          { key: "invoices" as const, label: "Invoices",  icon: Receipt },
+          { key: "payments" as const, label: "Payments",  icon: Landmark },
+        ] as const).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === key
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── INVOICES TAB ── */}
+      {activeTab === "invoices" && <>
+
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -830,6 +916,115 @@ function FinancialsPageContent() {
           )}
         </CardContent>
       </Card>
+
+      </> /* end invoices tab */}
+
+      {/* ── PAYMENTS TAB ── */}
+      {activeTab === "payments" && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Payment History</CardTitle>
+                <CardDescription className="mt-0.5">All recorded payments against invoices</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={fetchPayments} disabled={paymentsLoading}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${paymentsLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {paymentsLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : payments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <ArrowDownLeft className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                <h3 className="text-lg font-semibold">No payments yet</h3>
+                <p className="text-muted-foreground text-sm mt-1">
+                  Payments will appear here once invoices are settled
+                </p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Tenant</TableHead>
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Reference</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Reconciled</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {payments.map((pmt) => (
+                    <TableRow key={pmt.id}>
+                      <TableCell className="text-sm">
+                        <div className="flex items-center gap-1.5">
+                          <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                          {pmt.paymentDate ? new Date(pmt.paymentDate).toLocaleDateString("en-IN") : "—"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {pmt.tenant ? (
+                          <div>
+                            <div className="font-medium text-sm">{pmt.tenant.businessName}</div>
+                            {pmt.lease && (
+                              <div className="text-xs text-muted-foreground">Unit {pmt.lease.unitNumber}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {pmt.invoice ? (
+                          <div>
+                            <div className="font-mono text-sm font-medium">{pmt.invoice.invoiceNumber}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {invoiceTypeLabels[pmt.invoice.invoiceType] || pmt.invoice.invoiceType}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {paymentMethodLabels[pmt.paymentMethod || ""] || pmt.paymentMethod || "—"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground font-mono">
+                        {pmt.referenceNumber || "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="font-semibold text-green-700">
+                          {formatCurrency(pmt.amount)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {pmt.reconciled ? (
+                          <Badge className="bg-green-100 text-green-700 gap-1">
+                            <CheckCircle2 className="h-3 w-3" /> Reconciled
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground gap-1">
+                            <Clock className="h-3 w-3" /> Pending
+                          </Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* View Invoice Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>

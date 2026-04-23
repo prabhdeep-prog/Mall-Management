@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Next.js Dev",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["exec", "next", "dev", "-p", "3001"],
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "PATH=/Users/prabhdeep/.nvm/versions/node/v20.10.0/bin:/opt/homebrew/bin:$PATH pnpm exec next dev -p 3001"],
       "port": 3001
     },
     {

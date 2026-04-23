@@ -148,7 +148,7 @@ function generateDaySales(
   })
 
   return {
-    date,
+    date: new Date(date),
     grossSales,
     netSales,
     refunds,
@@ -156,9 +156,12 @@ function generateDaySales(
     transactionCount,
     avgTransactionValue,
     categoryBreakdown,
-    hourlyBreakdown,
+    hourlyBreakdown: Object.fromEntries(
+      Object.entries(hourlyBreakdown).map(([h, v]) => [parseInt(h, 10), v])
+    ),
   }
 }
+
 
 /**
  * Generate N days of realistic POS sales data for a tenant

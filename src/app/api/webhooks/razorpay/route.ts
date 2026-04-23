@@ -5,7 +5,7 @@
  *
  * Security:
  *   • HMAC-SHA256 signature verified before any DB writes
- *   • Idempotency key = Razorpay event ID stored in billing_events
+ *   • Idempotency key = Razorpay event ID stored in billingEvents
  *   • Returns 200 on duplicate events (don't cause Razorpay retries)
  *
  * Events handled:
@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { eq, and } from "drizzle-orm"
 import { serviceDb } from "@/lib/db"
-import { subscriptions, billing_events } from "@/lib/db/schema"
+import { subscriptions, billingEvents } from "@/lib/db/schema"
 import {
   verifyRazorpayWebhook,
   razorpayEventToStatus,
@@ -28,6 +28,11 @@ import {
   type RazorpayEventType,
 } from "@/lib/billing/razorpay"
 import { initiateDunning } from "@/lib/billing/dunning"
+
+// App Router segment config — raw body is read via request.text() before any
+// JSON.parse so HMAC verification runs against the exact bytes Razorpay signed.
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
 export async function POST(request: NextRequest) {
   // ── 1. Read raw body (must be text for HMAC verification) ──────────────────
@@ -61,7 +66,7 @@ export async function POST(request: NextRequest) {
   //
   // Note: Razorpay doesn't expose a unique event ID in the webhook envelope.
   // We compose one from event type + subscription ID. This means re-deliveries
-  // of the same event will create new billing_events rows.
+  // of the same event will create new billingEvents rows.
   // Production: use razorpay-event-id header if available, or store raw payload hash.
   const idempotencyKey = `razorpay:${eventType}:${rzpSub?.id}`
 
@@ -72,9 +77,9 @@ export async function POST(request: NextRequest) {
 
   // ── 4. Idempotency check ───────────────────────────────────────────────────
   const [existing] = await serviceDb
-    .select({ id: billing_events.id, status: billing_events.status })
-    .from(billing_events)
-    .where(eq(billing_events.idempotency_key, idempotencyKey))
+    .select({ id: billingEvents.id, status: billingEvents.status })
+    .from(billingEvents)
+    .where(eq(billingEvents.idempotencyKey, idempotencyKey))
     .limit(1)
 
   if (existing) {
@@ -86,27 +91,26 @@ export async function POST(request: NextRequest) {
   const [ourSub] = await serviceDb
     .select({
       id:              subscriptions.id,
-      organization_id: subscriptions.organization_id,
+      organization_id: subscriptions.organizationId,
       status:          subscriptions.status,
-      plan_id:         subscriptions.plan_id,
+      plan_id:         subscriptions.planId,
     })
     .from(subscriptions)
-    .where(eq(subscriptions.provider_subscription_id, rzpSub.id))
+    .where(eq(subscriptions.providerSubscriptionId, rzpSub.id))
     .limit(1)
 
   // ── 6. Insert billing_event (append-only audit log) ────────────────────────
   const [eventRow] = await serviceDb
-    .insert(billing_events)
+    .insert(billingEvents)
     .values({
-      idempotency_key:  idempotencyKey,
-      provider:         "razorpay",
-      event_type:       eventType,
-      payload:          payload as unknown as Record<string, unknown>,
-      organization_id:  ourSub?.organization_id ?? null,
-      subscription_id:  ourSub?.id ?? null,
-      status:           "pending",
+      idempotencyKey:  idempotencyKey,
+      provider:        "razorpay",
+      eventType:       eventType,
+      payload:         payload as unknown as Record<string, unknown>,
+      organizationId:  ourSub?.organization_id ?? null,
+      subscriptionId:  ourSub?.id ?? null,
     })
-    .returning({ id: billing_events.id })
+    .returning({ id: billingEvents.id })
     .onConflictDoNothing()
 
   // If conflict (race) → duplicate, already handled above
@@ -125,9 +129,9 @@ export async function POST(request: NextRequest) {
       console.warn(`[webhooks/razorpay] subscription ${rzpSub.id} not found in DB — skipping state update`)
       // Mark as skipped but return 200 to avoid Razorpay retrying forever
       await serviceDb
-        .update(billing_events)
-        .set({ status: "skipped", error_detail: "Subscription not found in DB", processed_at: now })
-        .where(eq(billing_events.id, eventRow.id))
+        .update(billingEvents)
+        .set({ status: "skipped", errorDetail: "Subscription not found in DB", processedAt: now })
+        .where(eq(billingEvents.id, eventRow.id))
       return NextResponse.json({ received: true, skipped: true })
     }
 
@@ -147,13 +151,13 @@ export async function POST(request: NextRequest) {
 
   // ── 8. Update billing_event status ────────────────────────────────────────
   await serviceDb
-    .update(billing_events)
+    .update(billingEvents)
     .set({
-      status:       success ? "processed" : "failed",
-      error_detail: errMsg || null,
-      processed_at: now,
+      status:      success ? "processed" : "failed",
+      errorDetail: errMsg || null,
+      processedAt: now,
     })
-    .where(eq(billing_events.id, eventRow.id))
+    .where(eq(billingEvents.id, eventRow.id))
 
   // Always return 200 — non-200 causes Razorpay to retry forever
   return NextResponse.json({ received: true, processed: success })
@@ -185,15 +189,15 @@ async function processRazorpayEvent(opts: {
       await serviceDb
         .update(subscriptions)
         .set({
-          status:                "active",
-          current_period_start:  periodStart,
-          current_period_end:    periodEnd,
+          status:               "active",
+          currentPeriodStart:   periodStart,
+          currentPeriodEnd:     periodEnd,
           // Clear dunning state on successful payment
-          payment_failed_at:     null,
-          payment_failure_count: 0,
-          next_retry_at:         null,
-          grace_period_ends_at:  null,
-          updated_at:            now,
+          paymentFailedAt:      null,
+          paymentFailureCount:  0,
+          nextRetryAt:          null,
+          gracePeriodEndsAt:    null,
+          updatedAt:            now,
         })
         .where(eq(subscriptions.id, ourSub.id))
       break
@@ -205,8 +209,8 @@ async function processRazorpayEvent(opts: {
         await serviceDb
           .update(subscriptions)
           .set({
-            status:     "past_due",
-            updated_at: now,
+            status:    "past_due",
+            updatedAt: now,
           })
           .where(eq(subscriptions.id, ourSub.id))
 
@@ -224,9 +228,9 @@ async function processRazorpayEvent(opts: {
       await serviceDb
         .update(subscriptions)
         .set({
-          status:       "cancelled",
-          cancelled_at: now,
-          updated_at:   now,
+          status:      "cancelled",
+          cancelledAt: now,
+          updatedAt:   now,
         })
         .where(eq(subscriptions.id, ourSub.id))
 
@@ -244,8 +248,8 @@ async function processRazorpayEvent(opts: {
       await serviceDb
         .update(subscriptions)
         .set({
-          status:     "expired",
-          updated_at: now,
+          status:    "expired",
+          updatedAt: now,
         })
         .where(eq(subscriptions.id, ourSub.id))
       break
@@ -257,7 +261,7 @@ async function processRazorpayEvent(opts: {
       if (newStatus) {
         await serviceDb
           .update(subscriptions)
-          .set({ status: newStatus, updated_at: now })
+          .set({ status: newStatus, updatedAt: now })
           .where(eq(subscriptions.id, ourSub.id))
       }
       break
@@ -269,7 +273,3 @@ async function processRazorpayEvent(opts: {
   }
 }
 
-// ── Config: disable body parsing (we need raw body for HMAC) ──────────────────
-export const config = {
-  api: { bodyParser: false },
-}

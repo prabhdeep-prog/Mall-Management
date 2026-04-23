@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
+import { withOrgContext } from "@/lib/db/with-org-context"
 import { tenants, leases, invoices, workOrders, properties } from "@/lib/db/schema"
-import { eq, and, desc, sql } from "drizzle-orm"
+import { eq, and, desc, sql, inArray } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
+import { invalidateEntityCache } from "@/lib/cache"
 
 // Extended fields stored in metadata
 interface TenantMetadata {
@@ -40,6 +43,9 @@ export async function GET(
       return NextResponse.json({ error }, { status: 403 })
     }
 
+    const session = await auth()
+    const organizationId = session?.user?.organizationId || "default"
+
     const tenantId = params.id
 
     // Validate UUID format
@@ -51,13 +57,14 @@ export async function GET(
       )
     }
 
-    // Fetch tenant with property info
-    const tenant = await db.query.tenants.findFirst({
-      where: eq(tenants.id, tenantId),
-      with: {
-        property: true,
-      },
-    })
+    const tenantDetails = await withOrgContext(organizationId, async (tx) => {
+      // Fetch tenant with property info
+      const tenant = await tx.query.tenants.findFirst({
+        where: eq(tenants.id, tenantId),
+        with: {
+          property: true,
+        },
+      })
 
     if (!tenant) {
       return NextResponse.json(
@@ -69,32 +76,37 @@ export async function GET(
     // Extract extended fields from metadata
     const metadata = (tenant.metadata || {}) as TenantMetadata
 
-    // Fetch leases for this tenant
-    const tenantLeases = await db
-      .select()
-      .from(leases)
-      .where(eq(leases.tenantId, tenantId))
-      .orderBy(desc(leases.startDate))
+      // Fetch leases for this tenant with property info
+      const tenantLeasesRaw = await tx
+        .select({ lease: leases, property: properties })
+        .from(leases)
+        .leftJoin(properties, eq(leases.propertyId, properties.id))
+        .where(eq(leases.tenantId, tenantId))
+        .orderBy(desc(leases.startDate))
+      const tenantLeases = tenantLeasesRaw.map(({ lease, property }) => ({
+        ...lease,
+        property: property ? { id: property.id, name: property.name, code: property.code } : null,
+      }))
 
-    // Fetch invoices for this tenant's leases
-    const leaseIds = tenantLeases.map(l => l.id)
-    let tenantInvoices: typeof invoices.$inferSelect[] = []
-    if (leaseIds.length > 0) {
-      tenantInvoices = await db
+      // Fetch invoices for this tenant's leases
+      const leaseIds = tenantLeases.map(l => l.id)
+      let tenantInvoices: typeof invoices.$inferSelect[] = []
+      if (leaseIds.length > 0) {
+        tenantInvoices = await tx
+          .select()
+          .from(invoices)
+          .where(inArray(invoices.leaseId, leaseIds))
+          .orderBy(desc(invoices.createdAt))
+          .limit(20)
+      }
+
+      // Fetch work orders for this tenant
+      const tenantWorkOrders = await tx
         .select()
-        .from(invoices)
-        .where(sql`${invoices.leaseId} IN ${leaseIds}`)
-        .orderBy(desc(invoices.createdAt))
+        .from(workOrders)
+        .where(eq(workOrders.tenantId, tenantId))
+        .orderBy(desc(workOrders.createdAt))
         .limit(20)
-    }
-
-    // Fetch work orders for this tenant
-    const tenantWorkOrders = await db
-      .select()
-      .from(workOrders)
-      .where(eq(workOrders.tenantId, tenantId))
-      .orderBy(desc(workOrders.createdAt))
-      .limit(20)
 
     // Calculate financial summary
     const totalRent = tenantLeases.reduce((sum, l) => sum + (parseFloat(l.baseRent || "0")), 0)
@@ -114,49 +126,50 @@ export async function GET(
     const activeLease = tenantLeases.find(l => l.status === "active")
 
     // Flatten metadata fields into the response
-    const tenantDetails = {
-      ...tenant,
-      // Extended fields from metadata
-      brandName: metadata.brandName || null,
-      businessType: metadata.businessType || null,
-      designation: metadata.designation || null,
-      authorizedSignatory: metadata.authorizedSignatory || null,
-      signatoryPhone: metadata.signatoryPhone || null,
-      signatoryEmail: metadata.signatoryEmail || null,
-      tan: metadata.tan || null,
-      cin: metadata.cin || null,
-      fssaiLicense: metadata.fssaiLicense || null,
-      shopEstablishmentNumber: metadata.shopEstablishmentNumber || null,
-      registeredAddress: metadata.registeredAddress || null,
-      registeredCity: metadata.registeredCity || null,
-      registeredState: metadata.registeredState || null,
-      registeredPincode: metadata.registeredPincode || null,
-      bankName: metadata.bankName || null,
-      bankBranch: metadata.bankBranch || null,
-      accountNumber: metadata.accountNumber || null,
-      ifscCode: metadata.ifscCode || null,
-      accountHolderName: metadata.accountHolderName || null,
-      emergencyContactName: metadata.emergencyContactName || null,
-      emergencyContactPhone: metadata.emergencyContactPhone || null,
-      website: metadata.website || null,
-      // Related data
-      leases: tenantLeases,
-      invoices: tenantInvoices,
-      workOrders: tenantWorkOrders,
-      activeLease,
-      financialSummary: {
-        monthlyRent: totalRent,
-        totalInvoiced,
-        totalPaid,
-        totalPending,
-        collectionRate: totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : "0",
-      },
-      workOrderSummary: {
-        total: tenantWorkOrders.length,
-        open: openWorkOrders,
-        resolved: resolvedWorkOrders,
-      },
-    }
+      return {
+        ...tenant,
+        // Extended fields from metadata
+        brandName: metadata.brandName || null,
+        businessType: metadata.businessType || null,
+        designation: metadata.designation || null,
+        authorizedSignatory: metadata.authorizedSignatory || null,
+        signatoryPhone: metadata.signatoryPhone || null,
+        signatoryEmail: metadata.signatoryEmail || null,
+        tan: metadata.tan || null,
+        cin: metadata.cin || null,
+        fssaiLicense: metadata.fssaiLicense || null,
+        shopEstablishmentNumber: metadata.shopEstablishmentNumber || null,
+        registeredAddress: metadata.registeredAddress || null,
+        registeredCity: metadata.registeredCity || null,
+        registeredState: metadata.registeredState || null,
+        registeredPincode: metadata.registeredPincode || null,
+        bankName: metadata.bankName || null,
+        bankBranch: metadata.bankBranch || null,
+        accountNumber: metadata.accountNumber || null,
+        ifscCode: metadata.ifscCode || null,
+        accountHolderName: metadata.accountHolderName || null,
+        emergencyContactName: metadata.emergencyContactName || null,
+        emergencyContactPhone: metadata.emergencyContactPhone || null,
+        website: metadata.website || null,
+        // Related data
+        leases: tenantLeases,
+        invoices: tenantInvoices,
+        workOrders: tenantWorkOrders,
+        activeLease,
+        financialSummary: {
+          monthlyRent: totalRent,
+          totalInvoiced,
+          totalPaid,
+          totalPending,
+          collectionRate: totalInvoiced > 0 ? ((totalPaid / totalInvoiced) * 100).toFixed(1) : "0",
+        },
+        workOrderSummary: {
+          total: tenantWorkOrders.length,
+          open: openWorkOrders,
+          resolved: resolvedWorkOrders,
+        },
+      }
+    })
 
     return NextResponse.json({ success: true, data: tenantDetails })
   } catch (error) {
@@ -178,6 +191,9 @@ export async function PUT(
       return NextResponse.json({ error }, { status: 403 })
     }
 
+    const session = await auth()
+    const organizationId = session?.user?.organizationId || "default"
+
     const tenantId = params.id
 
     // Validate UUID format
@@ -191,23 +207,7 @@ export async function PUT(
 
     const body = await request.json()
     
-    // Core fields (stored directly in tenants table)
-    const {
-      businessName,
-      legalEntityName,
-      category,
-      subcategory,
-      contactPerson,
-      email,
-      phone,
-      alternatePhone,
-      gstin,
-      pan,
-      tradeLicense,
-      status,
-    } = body
-
-    // Extended fields (stored in metadata JSON)
+    // Extended fields for metadata
     const {
       brandName,
       businessType,
@@ -233,17 +233,15 @@ export async function PUT(
       website,
     } = body
 
-    // Check if tenant exists
-    const existingTenant = await db.query.tenants.findFirst({
-      where: eq(tenants.id, tenantId),
-    })
+    const [updatedTenant] = await withOrgContext(organizationId, async (tx) => {
+      // Check if tenant exists
+      const existingTenant = await tx.query.tenants.findFirst({
+        where: eq(tenants.id, tenantId),
+      })
 
-    if (!existingTenant) {
-      return NextResponse.json(
-        { success: false, error: "Tenant not found" },
-        { status: 404 }
-      )
-    }
+      if (!existingTenant) {
+        throw new Error("Tenant not found")
+      }
 
     // Build metadata object with existing + new values
     const existingMetadata = (existingTenant.metadata || {}) as TenantMetadata
@@ -273,27 +271,33 @@ export async function PUT(
       ...(website !== undefined && { website }),
     }
 
-    // Update tenant
-    const [updatedTenant] = await db
-      .update(tenants)
-      .set({
-        ...(businessName && { businessName }),
-        ...(legalEntityName !== undefined && { legalEntityName }),
-        ...(category && { category }),
-        ...(subcategory !== undefined && { subcategory }),
-        ...(contactPerson !== undefined && { contactPerson }),
-        ...(email !== undefined && { email }),
-        ...(phone !== undefined && { phone }),
-        ...(alternatePhone !== undefined && { alternatePhone }),
-        ...(gstin !== undefined && { gstin }),
-        ...(pan !== undefined && { pan }),
-        ...(tradeLicense !== undefined && { tradeLicense }),
-        ...(status && { status }),
-        metadata: newMetadata,
-        updatedAt: new Date(),
-      })
-      .where(eq(tenants.id, tenantId))
-      .returning()
+      // Update tenant
+      return tx
+        .update(tenants)
+        .set({
+          ...(body.businessName && { businessName: body.businessName }),
+          ...(body.legalEntityName !== undefined && { legalEntityName: body.legalEntityName }),
+          ...(body.category && { category: body.category }),
+          ...(body.subcategory !== undefined && { subcategory: body.subcategory }),
+          ...(body.contactPerson !== undefined && { contactPerson: body.contactPerson }),
+          ...(body.email !== undefined && { email: body.email }),
+          ...(body.phone !== undefined && { phone: body.phone }),
+          ...(body.alternatePhone !== undefined && { alternatePhone: body.alternatePhone }),
+          ...(body.gstin !== undefined && { gstin: body.gstin }),
+          ...(body.pan !== undefined && { pan: body.pan }),
+          ...(body.tradeLicense !== undefined && { tradeLicense: body.tradeLicense }),
+          ...(body.status && { status: body.status }),
+          metadata: newMetadata,
+          updatedAt: new Date(),
+        })
+        .where(eq(tenants.id, tenantId))
+        .returning()
+    })
+
+    if (updatedTenant) {
+      // Invalidate cache
+      await invalidateEntityCache("tenant", tenantId, updatedTenant.propertyId || undefined, organizationId)
+    }
 
     return NextResponse.json({ success: true, data: updatedTenant })
   } catch (error) {
@@ -315,6 +319,9 @@ export async function DELETE(
       return NextResponse.json({ error }, { status: 403 })
     }
 
+    const session = await auth()
+    const organizationId = session?.user?.organizationId || "default"
+
     const tenantId = params.id
 
     // Validate UUID format
@@ -326,36 +333,35 @@ export async function DELETE(
       )
     }
 
-    // Check if tenant exists
-    const existingTenant = await db.query.tenants.findFirst({
-      where: eq(tenants.id, tenantId),
+    await withOrgContext(organizationId, async (tx) => {
+      // Check if tenant exists
+      const existingTenant = await tx.query.tenants.findFirst({
+        where: eq(tenants.id, tenantId),
+      })
+
+      if (!existingTenant) {
+        throw new Error("Tenant not found")
+      }
+
+      // Check for active leases
+      const activeLeases = await tx
+        .select()
+        .from(leases)
+        .where(and(
+          eq(leases.tenantId, tenantId),
+          eq(leases.status, "active")
+        ))
+
+      if (activeLeases.length > 0) {
+        throw new Error("Cannot delete tenant with active leases")
+      }
+
+      // Delete tenant (cascade will handle related records based on schema)
+      await tx.delete(tenants).where(eq(tenants.id, tenantId))
+      
+      // Invalidate cache
+      await invalidateEntityCache("tenant", tenantId, existingTenant.propertyId, organizationId)
     })
-
-    if (!existingTenant) {
-      return NextResponse.json(
-        { success: false, error: "Tenant not found" },
-        { status: 404 }
-      )
-    }
-
-    // Check for active leases
-    const activeLeases = await db
-      .select()
-      .from(leases)
-      .where(and(
-        eq(leases.tenantId, tenantId),
-        eq(leases.status, "active")
-      ))
-
-    if (activeLeases.length > 0) {
-      return NextResponse.json(
-        { success: false, error: "Cannot delete tenant with active leases. Please terminate all leases first." },
-        { status: 400 }
-      )
-    }
-
-    // Delete tenant (cascade will handle related records based on schema)
-    await db.delete(tenants).where(eq(tenants.id, tenantId))
 
     return NextResponse.json({ success: true, message: "Tenant deleted successfully" })
   } catch (error) {

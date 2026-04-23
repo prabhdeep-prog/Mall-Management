@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
+import { withOrgContext } from "@/lib/db/with-org-context"
 import { 
   properties, 
   tenants, 
@@ -33,19 +34,20 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get("propertyId")
     const refresh = searchParams.get("refresh") === "true"
+    const organizationId = session.user.organizationId || "default"
 
     // If refresh requested, invalidate cache
     if (refresh && propertyId) {
-      await invalidateEntityCache("property", propertyId)
+      await invalidateEntityCache("property", propertyId, undefined, organizationId)
     }
 
     // Get dashboard metrics with caching
     const metrics = await getCachedOrFetch(
       propertyId 
-        ? CACHE_KEYS.DASHBOARD_METRICS(propertyId)
-        : CACHE_KEYS.DASHBOARD_SUMMARY(session.user.organizationId || "default"),
+        ? CACHE_KEYS.DASHBOARD_METRICS(organizationId, propertyId)
+        : CACHE_KEYS.DASHBOARD_SUMMARY(organizationId),
       async () => {
-        return await fetchDashboardMetrics(propertyId || undefined)
+        return await fetchDashboardMetrics(organizationId, propertyId || undefined)
       },
       CACHE_TTL.MEDIUM // 5 minutes
     )
@@ -60,8 +62,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchDashboardMetrics(propertyId?: string) {
-  const today = new Date()
+async function fetchDashboardMetrics(organizationId: string, propertyId?: string) {
+  return await withOrgContext(organizationId, async (tx) => {
+    const today = new Date()
   const startOfMonthDate = new Date(today.getFullYear(), today.getMonth(), 1)
   const endOfMonthDate = new Date(today.getFullYear(), today.getMonth() + 1, 0)
   const startOfMonth = startOfMonthDate.toISOString().split("T")[0]
@@ -79,28 +82,28 @@ async function fetchDashboardMetrics(propertyId?: string) {
   ] = await Promise.all([
     // Property statistics
     propertyId 
-      ? db.select({ 
+      ? tx.select({ 
           count: count(),
           totalArea: sum(properties.totalAreaSqft)
         }).from(properties).where(eq(properties.id, propertyId))
-      : db.select({ 
+      : tx.select({ 
           count: count(),
           totalArea: sum(properties.totalAreaSqft)
         }).from(properties),
 
     // Tenant statistics
     propertyId
-      ? db.select({
+      ? tx.select({
           total: count(),
           active: sql<number>`count(case when ${tenants.status} = 'active' then 1 end)`,
         }).from(tenants).where(eq(tenants.propertyId, propertyId))
-      : db.select({
+      : tx.select({
           total: count(),
           active: sql<number>`count(case when ${tenants.status} = 'active' then 1 end)`,
         }).from(tenants),
 
     // Invoice statistics for current month
-    db.select({
+    tx.select({
       totalInvoices: count(),
       totalAmount: sum(invoices.totalAmount),
       pending: sql<number>`count(case when ${invoices.status} = 'pending' then 1 end)`,
@@ -116,14 +119,14 @@ async function fetchDashboardMetrics(propertyId?: string) {
 
     // Work order statistics
     propertyId
-      ? db.select({
+      ? tx.select({
           total: count(),
           open: sql<number>`count(case when ${workOrders.status} = 'open' then 1 end)`,
           inProgress: sql<number>`count(case when ${workOrders.status} = 'in_progress' then 1 end)`,
           completed: sql<number>`count(case when ${workOrders.status} = 'completed' then 1 end)`,
           critical: sql<number>`count(case when ${workOrders.priority} = 'critical' then 1 end)`,
         }).from(workOrders).where(eq(workOrders.propertyId, propertyId))
-      : db.select({
+      : tx.select({
           total: count(),
           open: sql<number>`count(case when ${workOrders.status} = 'open' then 1 end)`,
           inProgress: sql<number>`count(case when ${workOrders.status} = 'in_progress' then 1 end)`,
@@ -132,7 +135,7 @@ async function fetchDashboardMetrics(propertyId?: string) {
         }).from(workOrders),
 
     // Agent action statistics
-    db.select({
+    tx.select({
       total: count(),
       pending: sql<number>`count(case when ${agentActions.status} = 'pending' then 1 end)`,
       approved: sql<number>`count(case when ${agentActions.status} = 'approved' then 1 end)`,
@@ -141,18 +144,18 @@ async function fetchDashboardMetrics(propertyId?: string) {
 
     // Recent daily metrics (last 7 days)
     propertyId
-      ? db.select()
+      ? tx.select()
           .from(dailyMetrics)
           .where(eq(dailyMetrics.propertyId, propertyId))
           .orderBy(desc(dailyMetrics.metricDate))
           .limit(7)
-      : db.select()
+      : tx.select()
           .from(dailyMetrics)
           .orderBy(desc(dailyMetrics.metricDate))
           .limit(7),
 
     // Recent agent activities
-    db.select()
+    tx.select()
       .from(agentActions)
       .orderBy(desc(agentActions.createdAt))
       .limit(10),
@@ -217,6 +220,7 @@ async function fetchDashboardMetrics(propertyId?: string) {
       createdAt: a.createdAt,
     })),
     lastUpdated: new Date().toISOString(),
-  }
+    };
+  });
 }
 

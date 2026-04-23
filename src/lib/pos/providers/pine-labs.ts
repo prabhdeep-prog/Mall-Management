@@ -15,9 +15,12 @@
  */
 
 import type { POSProvider, POSSalesRecord, POSProviderConfig } from "../types"
+import { withRetry, isRetryableHttpError } from "@/lib/utils/retry"
+import { logger } from "@/lib/logger"
+import { withCircuitBreaker } from "../circuit-breaker"
 
 const PINE_LABS_BASE_URL = "https://api.pinelabs.com/partner/v2"
-const DEFAULT_TIMEOUT_MS = 15_000
+const DEFAULT_TIMEOUT_MS = 8_000   // reduced from 15 s — fail fast, let retry handle transients
 
 // ── Type definitions ──────────────────────────────────────────────────────────
 
@@ -137,6 +140,31 @@ export class PineLabsProvider implements POSProvider {
   // ── HTTP client ──────────────────────────────────────────────────────────────
 
   private async request<T>(
+    method: string,
+    path: string,
+    params?: Record<string, string>,
+  ): Promise<T> {
+    return withCircuitBreaker("pine_labs", () => 
+      withRetry(
+        () => this.doRequest<T>(method, path, params),
+        {
+          attempts:     3,
+          initialDelay: 1_000,
+          isRetryable:  isRetryableHttpError,
+          onRetry: (err, attempt, delay) => {
+            logger.warn("pine-labs: retrying request", {
+              path,
+              attempt,
+              nextDelayMs: delay,
+              error: err.message,
+            })
+          },
+        },
+      )
+    )
+  }
+
+  private async doRequest<T>(
     method: string,
     path: string,
     params?: Record<string, string>,

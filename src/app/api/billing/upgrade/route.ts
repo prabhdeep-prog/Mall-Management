@@ -3,7 +3,7 @@ import { z } from "zod"
 import { eq, and, sql } from "drizzle-orm"
 import { auth } from "@/lib/auth"
 import { serviceDb } from "@/lib/db"
-import { subscriptions, billing_plans } from "@/lib/db/schema"
+import { subscriptions, billingPlans } from "@/lib/db/schema"
 import { cancelRazorpaySubscription, createOrFetchRazorpayCustomer, createRazorpaySubscription } from "@/lib/billing/razorpay"
 import { upgradeStripeSubscription } from "@/lib/billing/stripe"
 import { PLANS, type PlanSlug, type BillingCycle } from "@/lib/billing/plans"
@@ -41,18 +41,18 @@ export async function POST(request: NextRequest) {
   // ── Fetch current active subscription ──────────────────────────────────────
   const [current] = await serviceDb
     .select({
-      id:                       subscriptions.id,
-      provider:                 subscriptions.provider,
-      provider_subscription_id: subscriptions.provider_subscription_id,
-      provider_customer_id:     subscriptions.provider_customer_id,
-      plan_id:                  subscriptions.plan_id,
-      billing_cycle:            subscriptions.billing_cycle,
-      status:                   subscriptions.status,
+      id:                      subscriptions.id,
+      provider:                subscriptions.provider,
+      provider_subscription_id:subscriptions.providerSubscriptionId,
+      provider_customer_id:    subscriptions.providerCustomerId,
+      plan_id:                 subscriptions.planId,
+      billing_cycle:           subscriptions.billingCycle,
+      status:                  subscriptions.status,
     })
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.organization_id, orgId),
+        eq(subscriptions.organizationId, orgId),
         sql`status NOT IN ('cancelled', 'expired')`
       )
     )
@@ -71,8 +71,8 @@ export async function POST(request: NextRequest) {
   // ── Fetch new plan row ──────────────────────────────────────────────────────
   const [newPlanRow] = await serviceDb
     .select()
-    .from(billing_plans)
-    .where(eq(billing_plans.slug, planSlug))
+    .from(billingPlans)
+    .where(eq(billingPlans.slug, planSlug))
     .limit(1)
 
   if (!newPlanRow) {
@@ -95,8 +95,8 @@ export async function POST(request: NextRequest) {
     if (current.provider === "stripe") {
       const priceId =
         billingCycle === "monthly"
-          ? newPlanRow.stripe_price_id_monthly
-          : newPlanRow.stripe_price_id_yearly
+          ? newPlanRow.stripePriceIdMonthly
+          : newPlanRow.stripePriceIdYearly
 
       if (!priceId) {
         return NextResponse.json(
@@ -121,11 +121,11 @@ export async function POST(request: NextRequest) {
       await serviceDb
         .update(subscriptions)
         .set({
-          plan_id:          newPlanRow.id,
-          billing_cycle:    billingCycle,
-          previous_plan_id: current.plan_id,
-          plan_changed_at:  now,
-          updated_at:       now,
+          planId:          newPlanRow.id,
+          billingCycle:    billingCycle,
+          previousPlanId:  current.plan_id ?? undefined,
+          planChangedAt:   now,
+          updatedAt:       now,
         })
         .where(eq(subscriptions.id, current.id))
 
@@ -142,8 +142,8 @@ export async function POST(request: NextRequest) {
     if (current.provider === "razorpay") {
       const razorpayPlanId =
         billingCycle === "monthly"
-          ? newPlanRow.razorpay_plan_id_monthly
-          : newPlanRow.razorpay_plan_id_yearly
+          ? newPlanRow.razorpayPlanIdMonthly
+          : newPlanRow.razorpayPlanIdYearly
 
       if (!razorpayPlanId) {
         return NextResponse.json(
@@ -179,25 +179,24 @@ export async function POST(request: NextRequest) {
       })
 
       // Update the existing subscription row to the new plan/subscription
-      // (The old provider sub stays active at provider level until cycle end)
       await serviceDb
         .update(subscriptions)
         .set({
-          plan_id:                  newPlanRow.id,
-          billing_cycle:            billingCycle,
-          provider_subscription_id: result.subscriptionId,
-          provider_customer_id:     result.customerId,
-          previous_plan_id:         current.plan_id,
-          plan_changed_at:          now,
-          status:                   "trialing",  // Until Razorpay confirms payment
-          updated_at:               now,
+          planId:                  newPlanRow.id,
+          billingCycle:            billingCycle,
+          providerSubscriptionId:  result.subscriptionId,
+          providerCustomerId:      result.customerId,
+          previousPlanId:          current.plan_id ?? undefined,
+          planChangedAt:           now,
+          status:                  "trialing",
+          updatedAt:               now,
         })
         .where(eq(subscriptions.id, current.id))
 
       return NextResponse.json({
         provider:       "razorpay",
         subscriptionId: result.subscriptionId,
-        shortUrl:       result.shortUrl,   // Redirect user here to authorise payment
+        shortUrl:       result.shortUrl,
         planSlug,
         billingCycle,
         message:        "Authorise payment on the linked page to activate the new plan.",

@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useSearchParams } from "next/navigation"
 import {
   CreditCard,
   Banknote,
@@ -168,6 +169,9 @@ function formatRelativeTime(dateStr: string): string {
 // ============================================================================
 
 export default function POSSimulatorPage() {
+  const searchParams = useSearchParams()
+  const presetTenantId = searchParams.get("tenantId")
+
   // Store selection
   const [integrations, setIntegrations] = React.useState<Integration[]>([])
   const [selectedIntegration, setSelectedIntegration] = React.useState<Integration | null>(null)
@@ -239,7 +243,7 @@ export default function POSSimulatorPage() {
     }
   }, [])
 
-  const handleSelectStore = (integration: Integration) => {
+  const handleSelectStore = React.useCallback((integration: Integration) => {
     setSelectedIntegration(integration)
     setStoreDropdownOpen(false)
     setTransactions([])
@@ -248,7 +252,14 @@ export default function POSSimulatorPage() {
     const products = CATEGORY_PRODUCTS[integration.category] || DEFAULT_PRODUCTS
     setCategory(products[0]?.key || "")
     loadTodayData(integration.id)
-  }
+  }, [loadTodayData])
+
+  // Auto-select the integration matching ?tenantId= once integrations have loaded.
+  React.useEffect(() => {
+    if (!presetTenantId || selectedIntegration || integrations.length === 0) return
+    const match = integrations.find((i) => i.tenantId === presetTenantId)
+    if (match) handleSelectStore(match)
+  }, [presetTenantId, integrations, selectedIntegration, handleSelectStore])
 
   // Record a sale
   const handleCompleteSale = async () => {
@@ -416,8 +427,16 @@ export default function POSSimulatorPage() {
                 </button>
               ))}
               {integrations.length === 0 && (
-                <div className="p-8 text-slate-500 text-sm">
-                  No connected POS integrations found. Create a revenue-share lease with POS in the mall admin dashboard first.
+                <div className="p-8 text-slate-500 text-sm space-y-2 text-center">
+                  <Store className="h-10 w-10 mx-auto text-slate-600 mb-3" />
+                  <p className="font-medium text-slate-400">No connected POS integrations found</p>
+                  <p className="text-xs">
+                    Go to <span className="font-mono text-slate-300">Tenants → [Tenant] → Lease</span> and create a <span className="text-emerald-400 font-medium">Revenue Share</span> lease.<br />
+                    On the <span className="text-emerald-400 font-medium">POS Integration</span> step, click <span className="text-amber-400 font-medium">Use Dev Sample</span> to auto-fill credentials, then save the lease.
+                  </p>
+                  <p className="text-xs text-slate-600 pt-1">
+                    If you already created a lease without POS details, delete it and re-create — or add the integration from the tenant detail page lease form.
+                  </p>
                 </div>
               )}
             </div>

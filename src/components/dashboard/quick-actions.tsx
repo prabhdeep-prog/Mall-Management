@@ -32,6 +32,26 @@ import {
 import { useRouter } from "next/navigation"
 import { useToast } from "@/components/ui/use-toast"
 
+interface PropertyOption {
+  id: string
+  name: string
+}
+
+interface LeaseOption {
+  id: string
+  unitNumber: string
+  tenantName: string
+}
+
+interface InvoiceOption {
+  id: string
+  invoiceNumber: string
+  totalAmount: string
+  paidAmount: string | null
+  status: string
+  tenant: { businessName: string } | null
+}
+
 export function QuickActions() {
   const router = useRouter()
   const { toast } = useToast()
@@ -40,95 +60,227 @@ export function QuickActions() {
   const [paymentDialogOpen, setPaymentDialogOpen] = React.useState(false)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
 
+  // Data for dropdowns
+  const [properties, setProperties] = React.useState<PropertyOption[]>([])
+  const [leases, setLeases] = React.useState<LeaseOption[]>([])
+  const [pendingInvoices, setPendingInvoices] = React.useState<InvoiceOption[]>([])
+  const [loadingData, setLoadingData] = React.useState(false)
+
   // Work order form state
   const [workOrderForm, setWorkOrderForm] = React.useState({
     title: "",
     description: "",
     priority: "medium",
     category: "general",
+    propertyId: "",
   })
 
   // Invoice form state
   const [invoiceForm, setInvoiceForm] = React.useState({
-    tenantId: "",
+    leaseId: "",
+    invoiceType: "rent",
     amount: "",
+    gstAmount: "",
     dueDate: "",
-    description: "",
+    periodStart: "",
+    periodEnd: "",
   })
 
   // Payment form state
   const [paymentForm, setPaymentForm] = React.useState({
     invoiceId: "",
     amount: "",
-    method: "bank_transfer",
+    paymentDate: new Date().toISOString().split("T")[0],
+    paymentMethod: "bank_transfer",
+    referenceNumber: "",
   })
 
+  // Safe JSON fetch helper — handles redirects to login page gracefully
+  const fetchJson = React.useCallback(async (url: string) => {
+    const res = await fetch(url)
+    const contentType = res.headers.get("content-type") || ""
+    if (!contentType.includes("application/json")) return null
+    if (!res.ok) return null
+    return res.json()
+  }, [])
+
+  // Fetch properties for work order dialog
+  const fetchProperties = React.useCallback(async () => {
+    try {
+      const data = await fetchJson("/api/properties")
+      if (!data) return
+      const list = data.data || data
+      setProperties(
+        Array.isArray(list)
+          ? list.map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))
+          : []
+      )
+    } catch {
+      // silently fail — user can still type
+    }
+  }, [fetchJson])
+
+  // Fetch leases for invoice dialog
+  const fetchLeases = React.useCallback(async () => {
+    try {
+      const data = await fetchJson("/api/leases")
+      if (!data) return
+      const list = data.data || data
+      setLeases(
+        Array.isArray(list)
+          ? list.map((l: { id: string; unitNumber: string; tenant?: { businessName?: string } }) => ({
+              id: l.id,
+              unitNumber: l.unitNumber || "N/A",
+              tenantName: l.tenant?.businessName || "Unknown",
+            }))
+          : []
+      )
+    } catch {
+      // silently fail
+    }
+  }, [fetchJson])
+
+  // Fetch pending invoices for payment dialog
+  const fetchPendingInvoices = React.useCallback(async () => {
+    try {
+      const data = await fetchJson("/api/invoices")
+      if (!data) return
+      const list = data.data || data
+      // Filter to pending/partially_paid on client side
+      setPendingInvoices(
+        Array.isArray(list)
+          ? list.filter((inv: InvoiceOption) => inv.status === "pending" || inv.status === "partially_paid")
+          : []
+      )
+    } catch {
+      // silently fail
+    }
+  }, [fetchJson])
+
+  // Load data when dialogs open
+  React.useEffect(() => {
+    if (workOrderDialogOpen && properties.length === 0) {
+      setLoadingData(true)
+      fetchProperties().finally(() => setLoadingData(false))
+    }
+  }, [workOrderDialogOpen, properties.length, fetchProperties])
+
+  React.useEffect(() => {
+    if (invoiceDialogOpen && leases.length === 0) {
+      setLoadingData(true)
+      fetchLeases().finally(() => setLoadingData(false))
+    }
+  }, [invoiceDialogOpen, leases.length, fetchLeases])
+
+  React.useEffect(() => {
+    if (paymentDialogOpen) {
+      setLoadingData(true)
+      fetchPendingInvoices().finally(() => setLoadingData(false))
+    }
+  }, [paymentDialogOpen, fetchPendingInvoices])
+
   const handleCreateWorkOrder = async () => {
+    if (!workOrderForm.propertyId || !workOrderForm.title) return
     setIsSubmitting(true)
     try {
       const response = await fetch("/api/work-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...workOrderForm,
-          propertyId: "default",
-          status: "pending",
+          propertyId: workOrderForm.propertyId,
+          title: workOrderForm.title,
+          description: workOrderForm.description,
+          priority: workOrderForm.priority,
+          category: workOrderForm.category,
         }),
       })
       if (response.ok) {
         toast({ title: "Success", description: "Work order created successfully!" })
         setWorkOrderDialogOpen(false)
-        setWorkOrderForm({ title: "", description: "", priority: "medium", category: "general" })
+        setWorkOrderForm({ title: "", description: "", priority: "medium", category: "general", propertyId: "" })
         router.push("/work-orders")
       } else {
-        throw new Error("Failed to create work order")
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || "Failed to create work order")
       }
     } catch (error) {
-      toast({ title: "Error", description: "Failed to create work order", variant: "destructive" })
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create work order", variant: "destructive" })
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const handleCreateInvoice = async () => {
+    if (!invoiceForm.leaseId || !invoiceForm.amount || !invoiceForm.dueDate) return
     setIsSubmitting(true)
     try {
       const response = await fetch("/api/invoices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...invoiceForm,
-          status: "pending",
+          leaseId: invoiceForm.leaseId,
+          invoiceType: invoiceForm.invoiceType,
+          amount: invoiceForm.amount,
+          gstAmount: invoiceForm.gstAmount || undefined,
+          dueDate: invoiceForm.dueDate,
+          periodStart: invoiceForm.periodStart || undefined,
+          periodEnd: invoiceForm.periodEnd || undefined,
         }),
       })
       if (response.ok) {
         toast({ title: "Success", description: "Invoice created successfully!" })
         setInvoiceDialogOpen(false)
-        setInvoiceForm({ tenantId: "", amount: "", dueDate: "", description: "" })
+        setInvoiceForm({ leaseId: "", invoiceType: "rent", amount: "", gstAmount: "", dueDate: "", periodStart: "", periodEnd: "" })
         router.push("/financials")
       } else {
-        throw new Error("Failed to create invoice")
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || "Failed to create invoice")
       }
     } catch (error) {
-      toast({ title: "Error", description: "Failed to create invoice", variant: "destructive" })
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to create invoice", variant: "destructive" })
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const handleRecordPayment = async () => {
+    if (!paymentForm.invoiceId || !paymentForm.amount || !paymentForm.paymentDate) return
     setIsSubmitting(true)
     try {
-      toast({ title: "Success", description: "Payment recorded successfully!" })
-      setPaymentDialogOpen(false)
-      setPaymentForm({ invoiceId: "", amount: "", method: "bank_transfer" })
-      router.push("/financials")
+      const response = await fetch(`/api/invoices/${paymentForm.invoiceId}/payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: paymentForm.amount,
+          paymentDate: paymentForm.paymentDate,
+          paymentMethod: paymentForm.paymentMethod,
+          referenceNumber: paymentForm.referenceNumber || undefined,
+        }),
+      })
+      if (response.ok) {
+        toast({ title: "Success", description: "Payment recorded successfully!" })
+        setPaymentDialogOpen(false)
+        setPaymentForm({ invoiceId: "", amount: "", paymentDate: new Date().toISOString().split("T")[0], paymentMethod: "bank_transfer", referenceNumber: "" })
+        router.push("/financials")
+      } else {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || "Failed to record payment")
+      }
     } catch (error) {
-      toast({ title: "Error", description: "Failed to record payment", variant: "destructive" })
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to record payment", variant: "destructive" })
     } finally {
       setIsSubmitting(false)
     }
   }
+
+  // Auto-fill amount when invoice is selected for payment
+  const selectedInvoice = pendingInvoices.find((inv) => inv.id === paymentForm.invoiceId)
+  React.useEffect(() => {
+    if (selectedInvoice) {
+      const remaining = parseFloat(selectedInvoice.totalAmount) - parseFloat(selectedInvoice.paidAmount || "0")
+      setPaymentForm((prev) => ({ ...prev, amount: remaining.toString() }))
+    }
+  }, [selectedInvoice])
 
   const quickActions = [
     {
@@ -209,6 +361,28 @@ export function QuickActions() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
+              <label className="text-sm font-medium">Property *</label>
+              {loadingData ? (
+                <div className="text-sm text-muted-foreground">Loading properties...</div>
+              ) : properties.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No properties found. <a href="/properties" className="underline">Add a property first</a>.</div>
+              ) : (
+                <Select
+                  value={workOrderForm.propertyId}
+                  onValueChange={(value) => setWorkOrderForm(prev => ({ ...prev, propertyId: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a property" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {properties.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium">Title *</label>
               <Input
                 placeholder="e.g., AC not working in Unit 203"
@@ -264,7 +438,7 @@ export function QuickActions() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setWorkOrderDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateWorkOrder} disabled={isSubmitting || !workOrderForm.title}>
+            <Button onClick={handleCreateWorkOrder} disabled={isSubmitting || !workOrderForm.title || !workOrderForm.propertyId}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Create Work Order
             </Button>
@@ -277,17 +451,70 @@ export function QuickActions() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create New Invoice</DialogTitle>
-            <DialogDescription>Create a new invoice for a tenant.</DialogDescription>
+            <DialogDescription>Create a new invoice for a tenant lease.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Amount (₹) *</label>
-              <Input
-                type="number"
-                placeholder="e.g., 150000"
-                value={invoiceForm.amount}
-                onChange={(e) => setInvoiceForm(prev => ({ ...prev, amount: e.target.value }))}
-              />
+              <label className="text-sm font-medium">Lease *</label>
+              {loadingData ? (
+                <div className="text-sm text-muted-foreground">Loading leases...</div>
+              ) : leases.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No leases found. <a href="/leases" className="underline">Create a lease first</a>.</div>
+              ) : (
+                <Select
+                  value={invoiceForm.leaseId}
+                  onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, leaseId: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a lease" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leases.map((l) => (
+                      <SelectItem key={l.id} value={l.id}>
+                        {l.tenantName} — Unit {l.unitNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invoice Type *</label>
+              <Select
+                value={invoiceForm.invoiceType}
+                onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, invoiceType: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="rent">Rent</SelectItem>
+                  <SelectItem value="cam">CAM Charges</SelectItem>
+                  <SelectItem value="utility">Utility</SelectItem>
+                  <SelectItem value="security_deposit">Security Deposit</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Amount (₹) *</label>
+                <Input
+                  type="number"
+                  placeholder="e.g., 150000"
+                  value={invoiceForm.amount}
+                  onChange={(e) => setInvoiceForm(prev => ({ ...prev, amount: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">GST Amount (₹)</label>
+                <Input
+                  type="number"
+                  placeholder="e.g., 27000"
+                  value={invoiceForm.gstAmount}
+                  onChange={(e) => setInvoiceForm(prev => ({ ...prev, gstAmount: e.target.value }))}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">Due Date *</label>
@@ -297,18 +524,28 @@ export function QuickActions() {
                 onChange={(e) => setInvoiceForm(prev => ({ ...prev, dueDate: e.target.value }))}
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
-              <Textarea
-                placeholder="Invoice description..."
-                value={invoiceForm.description}
-                onChange={(e) => setInvoiceForm(prev => ({ ...prev, description: e.target.value }))}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Period Start</label>
+                <Input
+                  type="date"
+                  value={invoiceForm.periodStart}
+                  onChange={(e) => setInvoiceForm(prev => ({ ...prev, periodStart: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Period End</label>
+                <Input
+                  type="date"
+                  value={invoiceForm.periodEnd}
+                  onChange={(e) => setInvoiceForm(prev => ({ ...prev, periodEnd: e.target.value }))}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setInvoiceDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateInvoice} disabled={isSubmitting || !invoiceForm.amount}>
+            <Button onClick={handleCreateInvoice} disabled={isSubmitting || !invoiceForm.leaseId || !invoiceForm.amount || !invoiceForm.dueDate}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Create Invoice
             </Button>
@@ -321,9 +558,41 @@ export function QuickActions() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Record Payment</DialogTitle>
-            <DialogDescription>Record a payment for an invoice.</DialogDescription>
+            <DialogDescription>Record a payment against a pending invoice.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invoice *</label>
+              {loadingData ? (
+                <div className="text-sm text-muted-foreground">Loading invoices...</div>
+              ) : pendingInvoices.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No pending invoices found.</div>
+              ) : (
+                <Select
+                  value={paymentForm.invoiceId}
+                  onValueChange={(value) => setPaymentForm(prev => ({ ...prev, invoiceId: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an invoice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pendingInvoices.map((inv) => (
+                      <SelectItem key={inv.id} value={inv.id}>
+                        {inv.invoiceNumber} — ₹{parseFloat(inv.totalAmount).toLocaleString("en-IN")}
+                        {inv.tenant ? ` (${inv.tenant.businessName})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {selectedInvoice && (
+              <div className="text-sm text-muted-foreground rounded-md bg-muted p-2">
+                Total: ₹{parseFloat(selectedInvoice.totalAmount).toLocaleString("en-IN")} |
+                Paid: ₹{parseFloat(selectedInvoice.paidAmount || "0").toLocaleString("en-IN")} |
+                Remaining: ₹{(parseFloat(selectedInvoice.totalAmount) - parseFloat(selectedInvoice.paidAmount || "0")).toLocaleString("en-IN")}
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">Amount (₹) *</label>
               <Input
@@ -334,10 +603,18 @@ export function QuickActions() {
               />
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-medium">Payment Date *</label>
+              <Input
+                type="date"
+                value={paymentForm.paymentDate}
+                onChange={(e) => setPaymentForm(prev => ({ ...prev, paymentDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium">Payment Method</label>
               <Select
-                value={paymentForm.method}
-                onValueChange={(value) => setPaymentForm(prev => ({ ...prev, method: value }))}
+                value={paymentForm.paymentMethod}
+                onValueChange={(value) => setPaymentForm(prev => ({ ...prev, paymentMethod: value }))}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -350,10 +627,18 @@ export function QuickActions() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Reference Number</label>
+              <Input
+                placeholder="e.g., UTR / Cheque number"
+                value={paymentForm.referenceNumber}
+                onChange={(e) => setPaymentForm(prev => ({ ...prev, referenceNumber: e.target.value }))}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleRecordPayment} disabled={isSubmitting || !paymentForm.amount}>
+            <Button onClick={handleRecordPayment} disabled={isSubmitting || !paymentForm.invoiceId || !paymentForm.amount || !paymentForm.paymentDate}>
               {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Record Payment
             </Button>
@@ -363,4 +648,3 @@ export function QuickActions() {
     </>
   )
 }
-

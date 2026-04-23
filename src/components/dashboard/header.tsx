@@ -6,6 +6,7 @@ import {
   Bell, ChevronDown, LogOut, User, Settings, Plus, Building2,
   Loader2, Search,
 } from "lucide-react"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -37,10 +38,23 @@ export function Header() {
 
   const [pendingApprovals, setPendingApprovals] = React.useState(0)
 
+  interface AdminNotification {
+    id: string
+    type: string | null
+    title: string | null
+    content: string | null
+    readAt: string | null
+    createdAt: string
+  }
+  const [adminNotifs, setAdminNotifs] = React.useState<AdminNotification[]>([])
+  const [adminUnread, setAdminUnread] = React.useState(0)
+
+  // Fetch properties only if stale (staleness managed inside the store)
   React.useEffect(() => { fetchProperties() }, [fetchProperties])
 
+  // Defer non-critical fetches so they don't block initial render
   React.useEffect(() => {
-    const fetchApprovals = async () => {
+    const timer = setTimeout(async () => {
       try {
         const res = await fetch("/api/agents/actions?status=pending")
         if (res.ok) {
@@ -48,8 +62,26 @@ export function Header() {
           setPendingApprovals(data.data?.length ?? 0)
         }
       } catch {}
+    }, 2000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  React.useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const res = await fetch("/api/notifications?recipientType=user&limit=10")
+        if (res.ok) {
+          const data = await res.json()
+          const items = data.data ?? []
+          setAdminNotifs(items)
+          setAdminUnread(items.filter((n: AdminNotification) => !n.readAt).length)
+        }
+      } catch {}
     }
-    fetchApprovals()
+    // Delay initial notification fetch to prioritize page content
+    const initialTimer = setTimeout(fetchNotifications, 3000)
+    const interval = setInterval(fetchNotifications, 30000)
+    return () => { clearTimeout(initialTimer); clearInterval(interval) }
   }, [])
 
   const userInitials = session?.user?.name
@@ -156,45 +188,86 @@ export function Header() {
           </Button>
         )}
 
+        {/* Theme toggle */}
+        <ThemeToggle />
+
         {/* Notifications */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative h-8 w-8">
               <Bell className="h-4 w-4" />
-              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-destructive" />
+              {adminUnread > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                  {adminUnread > 9 ? "9+" : adminUnread}
+                </span>
+              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel>Notifications</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <div className="max-h-72 overflow-y-auto divide-y">
-              <DropdownMenuItem className="flex flex-col items-start gap-1 cursor-pointer py-3">
-                <div className="flex items-center gap-2">
-                  <Badge variant="info" className="h-5 text-[10px]">Agent</Badge>
-                  <span className="text-sm font-medium">Tenant Relations</span>
+              {adminNotifs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
+                  <Bell className="h-5 w-5 mb-1.5 opacity-40" />
+                  <p className="text-xs">No notifications</p>
                 </div>
-                <p className="text-xs text-muted-foreground">Created work order for HVAC repair in Unit 203</p>
-                <span className="text-[10px] text-muted-foreground">2 min ago</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 cursor-pointer py-3">
-                <div className="flex items-center gap-2">
-                  <Badge variant="warning" className="h-5 text-[10px]">Alert</Badge>
-                  <span className="text-sm font-medium">Payment Overdue</span>
-                </div>
-                <p className="text-xs text-muted-foreground">Fashion Store Ltd has 3 pending invoices</p>
-                <span className="text-[10px] text-muted-foreground">15 min ago</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="flex flex-col items-start gap-1 cursor-pointer py-3">
-                <div className="flex items-center gap-2">
-                  <Badge variant="success" className="h-5 text-[10px]">Success</Badge>
-                  <span className="text-sm font-medium">Maintenance Complete</span>
-                </div>
-                <p className="text-xs text-muted-foreground">Elevator #2 maintenance completed successfully</p>
-                <span className="text-[10px] text-muted-foreground">1 hour ago</span>
-              </DropdownMenuItem>
+              ) : (
+                adminNotifs.map((n) => {
+                  const badgeMap: Record<string, string> = {
+                    support_request: "warning",
+                    payment_reminder: "warning",
+                    announcement: "info",
+                    maintenance_update: "success",
+                    invoice_created: "info",
+                    work_order_update: "success",
+                  }
+                  const navMap: Record<string, string> = {
+                    support_request: "/work-orders",
+                    maintenance_update: "/work-orders",
+                    invoice_created: "/financials",
+                  }
+                  return (
+                    <DropdownMenuItem
+                      key={n.id}
+                      className={cn(
+                        "flex flex-col items-start gap-1 cursor-pointer py-3",
+                        !n.readAt && "bg-muted/40",
+                      )}
+                      onClick={() => {
+                        if (!n.readAt) {
+                          fetch(`/api/notifications/${n.id}/read`, { method: "PATCH" }).catch(() => {})
+                          setAdminNotifs((prev) =>
+                            prev.map((x) =>
+                              x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x,
+                            ),
+                          )
+                          setAdminUnread((prev) => Math.max(0, prev - 1))
+                        }
+                        const dest = navMap[n.type ?? ""]
+                        if (dest) router.push(dest)
+                      }}
+                    >
+                      <div className="flex items-center gap-2 w-full">
+                        <Badge variant={(badgeMap[n.type ?? ""] ?? "outline") as "warning" | "info" | "success" | "outline"} className="h-5 text-[10px] capitalize shrink-0">
+                          {(n.type ?? "notice").replace(/_/g, " ")}
+                        </Badge>
+                        <span className={cn("text-sm truncate", !n.readAt && "font-medium")}>{n.title}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground line-clamp-2">{n.content}</p>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(n.createdAt).toLocaleString()}
+                      </span>
+                    </DropdownMenuItem>
+                  )
+                })
+              )}
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer justify-center text-primary text-sm">
+            <DropdownMenuItem
+              className="cursor-pointer justify-center text-primary text-sm"
+              onClick={() => router.push("/admin/notifications")}
+            >
               View all notifications
             </DropdownMenuItem>
           </DropdownMenuContent>

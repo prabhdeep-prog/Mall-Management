@@ -5,6 +5,7 @@ export { financialAnalystAgent } from "./implementations/financial"
 export { maintenanceCoordinatorAgent } from "./implementations/maintenance"
 export { spaceOptimizationAgent } from "./implementations/space-optimization"
 export { complianceMonitorAgent } from "./implementations/compliance"
+export { revenueForecastAgent } from "./implementations/revenue-forecast"
 
 // Agent Classes (only those with class implementations)
 export { FinancialAnalystAgent } from "./implementations/financial"
@@ -19,6 +20,7 @@ export { financialTools } from "./tools/financial"
 export { maintenanceTools } from "./tools/maintenance"
 export { spaceOptimizationTools } from "./tools/space-optimization"
 export { complianceTools } from "./tools/compliance"
+export { revenueForecastTools } from "./tools/revenue-forecast"
 
 // Agent Prompts
 export { TENANT_RELATIONS_SYSTEM_PROMPT } from "./prompts/tenant-relations"
@@ -27,6 +29,7 @@ export { FINANCIAL_ANALYST_SYSTEM_PROMPT } from "./prompts/financial"
 export { MAINTENANCE_COORDINATOR_SYSTEM_PROMPT } from "./prompts/maintenance"
 export { SPACE_OPTIMIZATION_SYSTEM_PROMPT } from "./prompts/space-optimization"
 export { COMPLIANCE_MONITOR_SYSTEM_PROMPT } from "./prompts/compliance"
+export { REVENUE_FORECAST_SYSTEM_PROMPT } from "./prompts/revenue-forecast"
 
 // Orchestrator
 export { BaseAgent, AgentOrchestrator, orchestrator } from "./orchestrator"
@@ -50,6 +53,7 @@ import { financialAnalystAgent } from "./implementations/financial"
 import { maintenanceCoordinatorAgent } from "./implementations/maintenance"
 import { spaceOptimizationAgent } from "./implementations/space-optimization"
 import { complianceMonitorAgent } from "./implementations/compliance"
+import { revenueForecastAgent } from "./implementations/revenue-forecast"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const agentRegistry: Record<string, any> = {
   "tenant-relations": tenantRelationsAgent,
@@ -58,6 +62,7 @@ export const agentRegistry: Record<string, any> = {
   "maintenance-coordinator": maintenanceCoordinatorAgent,
   "space-optimizer": spaceOptimizationAgent,
   "compliance-monitor": complianceMonitorAgent,
+  "revenue-forecast": revenueForecastAgent,
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,5 +123,13 @@ export const agentMetadata = [
     description: "Monitors regulatory compliance, tracks deadlines, and ensures documentation standards",
     color: "#64748b",
     icon: "Shield",
+  },
+  {
+    id: "revenue-forecast",
+    name: "Revenue Forecast Agent",
+    type: "revenue_forecast",
+    description: "Generates 30-day mall and zone revenue forecasts and surfaces actionable next-week insights",
+    color: "#0ea5e9",
+    icon: "TrendingUp",
   },
 ]

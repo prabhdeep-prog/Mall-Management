@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { posSalesData, posIntegrations, tenants, leases } from "@/lib/db/schema"
 import { eq, and, gte, lte, sql } from "drizzle-orm"
+import { requirePermission, PERMISSIONS } from "@/lib/auth/rbac"
 import { getPOSProvider, isDemoMode } from "@/lib/pos"
 import type { POSProviderKey } from "@/lib/pos/types"
 
 export async function GET(request: Request) {
   try {
+    const session = await auth()
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const { authorized, error: permError } = await requirePermission(PERMISSIONS.POS_VIEW)
+    if (!authorized) return NextResponse.json({ error: permError }, { status: 403 })
+
     const { searchParams } = new URL(request.url)
     const propertyId = searchParams.get("propertyId")
     const tenantId = searchParams.get("tenantId")
@@ -40,6 +49,13 @@ export async function GET(request: Request) {
 // POST — Trigger a sync for a specific POS integration
 export async function POST(request: Request) {
   try {
+    const session = await auth()
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+    const { authorized, error: permError } = await requirePermission(PERMISSIONS.POS_WRITE)
+    if (!authorized) return NextResponse.json({ error: permError }, { status: 403 })
+
     const body = await request.json()
     const { posIntegrationId, startDate, endDate } = body
 

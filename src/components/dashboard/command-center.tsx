@@ -5,6 +5,7 @@ import { KPICard } from "./kpi-card"
 import { AgentActivityFeed } from "@/components/agents/agent-activity-feed"
 import { AnomalyAlerts } from "./anomaly-alerts"
 import { QuickActions } from "./quick-actions"
+import { RevenueForecastWidget } from "./revenue-forecast-widget"
 import {
   Building2,
   CreditCard,
@@ -18,6 +19,7 @@ interface DashboardData {
     financials: { collectionRate: number; totalInvoices: number; paid: number; overdue: number }
     workOrders: { open: number; inProgress: number; critical: number }
     agents: { total: number; pending: number }
+    currentPropertyId?: string
   }
 }
 
@@ -131,6 +133,11 @@ export function CommandCenter() {
           icon={ThumbsUp}
         />
       </div>
+
+      {/* Revenue Forecast — renders once the dashboard API exposes currentPropertyId */}
+      {summary?.currentPropertyId && (
+        <RevenueForecastWidget mallId={summary.currentPropertyId} />
+      )}
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

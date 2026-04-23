@@ -42,42 +42,45 @@ function getRedisClient(): Redis | null {
   return redis
 }
 
-// Cache key prefixes for organization
+// Cache key prefixes for organization — all keys prefixed with orgId for tenant isolation
 export const CACHE_KEYS = {
   // Dashboard metrics
-  DASHBOARD_METRICS: (propertyId: string) => `dashboard:metrics:${propertyId}`,
-  DASHBOARD_SUMMARY: (orgId: string) => `dashboard:summary:${orgId}`,
-  
+  DASHBOARD_METRICS: (orgId: string, propertyId: string) => `${orgId}:dashboard:metrics:${propertyId}`,
+  DASHBOARD_SUMMARY: (orgId: string) => `${orgId}:dashboard:summary`,
+
   // Agent state and activities
-  AGENT_STATE: (agentId: string) => `agent:state:${agentId}`,
-  AGENT_ACTIVITIES: (propertyId: string) => `agent:activities:${propertyId}`,
-  AGENT_DECISIONS: (agentId: string) => `agent:decisions:${agentId}`,
-  
+  AGENT_STATE: (orgId: string, agentId: string) => `${orgId}:agent:state:${agentId}`,
+  AGENT_ACTIVITIES: (orgId: string, propertyId: string) => `${orgId}:agent:activities:${propertyId}`,
+  AGENT_DECISIONS: (orgId: string, agentId: string) => `${orgId}:agent:decisions:${agentId}`,
+
   // Property data
-  PROPERTY: (propertyId: string) => `property:${propertyId}`,
-  PROPERTY_LIST: (orgId: string) => `properties:list:${orgId}`,
-  PROPERTY_METRICS: (propertyId: string) => `property:metrics:${propertyId}`,
+  PROPERTY: (orgId: string, propertyId: string) => `${orgId}:property:${propertyId}`,
+  PROPERTY_LIST: (orgId: string) => `${orgId}:properties:list`,
+  PROPERTY_METRICS: (orgId: string, propertyId: string) => `${orgId}:property:metrics:${propertyId}`,
   
   // Tenant data
-  TENANT: (tenantId: string) => `tenant:${tenantId}`,
-  TENANT_LIST: (propertyId: string) => `tenants:list:${propertyId}`,
-  
+  TENANT: (orgId: string, tenantId: string) => `${orgId}:tenant:${tenantId}`,
+  TENANT_LIST: (orgId: string, propertyId: string) => `${orgId}:tenants:list:${propertyId}`,
+
   // Financial data
-  INVOICE_LIST: (propertyId: string) => `invoices:list:${propertyId}`,
-  PAYMENT_LIST: (propertyId: string) => `payments:list:${propertyId}`,
-  FINANCIAL_SUMMARY: (propertyId: string) => `financial:summary:${propertyId}`,
-  
+  INVOICE_LIST: (orgId: string, propertyId: string) => `${orgId}:invoices:list:${propertyId}`,
+  PAYMENT_LIST: (orgId: string, propertyId: string) => `${orgId}:payments:list:${propertyId}`,
+  FINANCIAL_SUMMARY: (orgId: string, propertyId: string) => `${orgId}:financial:summary:${propertyId}`,
+
   // Work orders
-  WORK_ORDER_LIST: (propertyId: string) => `workorders:list:${propertyId}`,
-  
-  // Session data
+  WORK_ORDER_LIST: (orgId: string, propertyId: string) => `${orgId}:workorders:list:${propertyId}`,
+
+  // Session data (user-scoped, not org-scoped)
   USER_SESSION: (userId: string) => `session:user:${userId}`,
-  
-  // Rate limiting
+
+  // Rate limiting (identity-scoped)
   RATE_LIMIT: (identifier: string) => `ratelimit:${identifier}`,
-  
+
   // Analytics
-  ANALYTICS: (propertyId: string, period: string) => `analytics:${propertyId}:${period}`,
+  ANALYTICS: (orgId: string, propertyId: string, period: string) => `${orgId}:analytics:${propertyId}:${period}`,
+
+  // POS live transaction counter (60s sliding window)
+  POS_LIVE_COUNTER: (orgId: string, tenantId: string) => `${orgId}:pos:live:${tenantId}`,
 } as const
 
 // Default TTL values (in seconds)
@@ -202,57 +205,61 @@ export async function deleteCachePattern(pattern: string): Promise<void> {
 export async function invalidateEntityCache(
   entityType: 'property' | 'tenant' | 'agent' | 'invoice' | 'workorder',
   entityId: string,
-  parentId?: string
+  parentId?: string,
+  orgId?: string
 ): Promise<void> {
   const client = getRedisClient()
   if (!client) return
-  
+
+  // Use orgId if provided; otherwise fall back to wildcard pattern delete
+  const o = orgId || "*"
+
   const keysToDelete: string[] = []
-  
+
   switch (entityType) {
     case 'property':
       keysToDelete.push(
-        CACHE_KEYS.PROPERTY(entityId),
-        CACHE_KEYS.PROPERTY_METRICS(entityId),
-        CACHE_KEYS.DASHBOARD_METRICS(entityId),
-        CACHE_KEYS.TENANT_LIST(entityId),
-        CACHE_KEYS.INVOICE_LIST(entityId),
-        CACHE_KEYS.WORK_ORDER_LIST(entityId)
+        CACHE_KEYS.PROPERTY(o, entityId),
+        CACHE_KEYS.PROPERTY_METRICS(o, entityId),
+        CACHE_KEYS.DASHBOARD_METRICS(o, entityId),
+        CACHE_KEYS.TENANT_LIST(o, entityId),
+        CACHE_KEYS.INVOICE_LIST(o, entityId),
+        CACHE_KEYS.WORK_ORDER_LIST(o, entityId)
       )
       if (parentId) {
         keysToDelete.push(CACHE_KEYS.PROPERTY_LIST(parentId))
       }
       break
-    
+
     case 'tenant':
-      keysToDelete.push(CACHE_KEYS.TENANT(entityId))
+      keysToDelete.push(CACHE_KEYS.TENANT(o, entityId))
       if (parentId) {
-        keysToDelete.push(CACHE_KEYS.TENANT_LIST(parentId))
+        keysToDelete.push(CACHE_KEYS.TENANT_LIST(o, parentId))
       }
       break
-    
+
     case 'agent':
       keysToDelete.push(
-        CACHE_KEYS.AGENT_STATE(entityId),
-        CACHE_KEYS.AGENT_DECISIONS(entityId)
+        CACHE_KEYS.AGENT_STATE(o, entityId),
+        CACHE_KEYS.AGENT_DECISIONS(o, entityId)
       )
       if (parentId) {
-        keysToDelete.push(CACHE_KEYS.AGENT_ACTIVITIES(parentId))
+        keysToDelete.push(CACHE_KEYS.AGENT_ACTIVITIES(o, parentId))
       }
       break
-    
+
     case 'invoice':
       if (parentId) {
         keysToDelete.push(
-          CACHE_KEYS.INVOICE_LIST(parentId),
-          CACHE_KEYS.FINANCIAL_SUMMARY(parentId)
+          CACHE_KEYS.INVOICE_LIST(o, parentId),
+          CACHE_KEYS.FINANCIAL_SUMMARY(o, parentId)
         )
       }
       break
-    
+
     case 'workorder':
       if (parentId) {
-        keysToDelete.push(CACHE_KEYS.WORK_ORDER_LIST(parentId))
+        keysToDelete.push(CACHE_KEYS.WORK_ORDER_LIST(o, parentId))
       }
       break
   }
@@ -330,22 +337,23 @@ export async function setAgentState(
     currentTask?: string
     lastActivity?: Date
     metrics?: Record<string, number>
-  }
+  },
+  orgId?: string
 ): Promise<void> {
-  const key = CACHE_KEYS.AGENT_STATE(agentId)
+  const key = CACHE_KEYS.AGENT_STATE(orgId || "_", agentId)
   await setCache(key, state, CACHE_TTL.MEDIUM)
 }
 
 /**
  * Get agent state from Redis
  */
-export async function getAgentState(agentId: string): Promise<{
+export async function getAgentState(agentId: string, orgId?: string): Promise<{
   status: 'idle' | 'processing' | 'waiting_approval' | 'error'
   currentTask?: string
   lastActivity?: Date
   metrics?: Record<string, number>
 } | null> {
-  return getCache(CACHE_KEYS.AGENT_STATE(agentId))
+  return getCache(CACHE_KEYS.AGENT_STATE(orgId || "_", agentId))
 }
 
 /**
@@ -361,12 +369,13 @@ export async function pushAgentActivity(
     description: string
     timestamp: Date
     status: string
-  }
+  },
+  orgId?: string
 ): Promise<void> {
   const client = getRedisClient()
   if (!client) return
-  
-  const key = CACHE_KEYS.AGENT_ACTIVITIES(propertyId)
+
+  const key = CACHE_KEYS.AGENT_ACTIVITIES(orgId || "_", propertyId)
   try {
     // Push to beginning of list
     await client.lpush(key, JSON.stringify(activity))
@@ -384,12 +393,13 @@ export async function pushAgentActivity(
  */
 export async function getAgentActivities(
   propertyId: string,
-  limit: number = 50
+  limit: number = 50,
+  orgId?: string
 ): Promise<unknown[]> {
   const client = getRedisClient()
   if (!client) return []
-  
-  const key = CACHE_KEYS.AGENT_ACTIVITIES(propertyId)
+
+  const key = CACHE_KEYS.AGENT_ACTIVITIES(orgId || "_", propertyId)
   try {
     const activities = await client.lrange(key, 0, limit - 1)
     return activities.map(a => typeof a === 'string' ? JSON.parse(a) : a)
@@ -446,6 +456,48 @@ export async function isRedisHealthy(): Promise<boolean> {
  */
 export function isRedisAvailable(): boolean {
   return getRedisClient() !== null
+}
+
+// ── POS live transaction counter ─────────────────────────────────────────────
+
+const POS_LIVE_TTL = 60 // 60 seconds
+
+/**
+ * Increment the live transaction counter for a tenant.
+ * Key auto-expires after 60 seconds so the count reflects a rolling window.
+ */
+export async function incrementPosLiveCounter(tenantId: string, orgId?: string): Promise<number> {
+  const client = getRedisClient()
+  if (!client) return 0
+
+  const key = CACHE_KEYS.POS_LIVE_COUNTER(orgId || "_", tenantId)
+  try {
+    const count = await client.incr(key)
+    // Reset TTL on every increment so the window slides forward
+    await client.expire(key, POS_LIVE_TTL)
+    return count
+  } catch (error) {
+    console.error('POS live counter increment error:', error)
+    return 0
+  }
+}
+
+/**
+ * Read the current live transaction count for a tenant.
+ * Returns 0 when Redis is unavailable or the key has expired.
+ */
+export async function getPosLiveCounter(tenantId: string, orgId?: string): Promise<number> {
+  const client = getRedisClient()
+  if (!client) return 0
+
+  const key = CACHE_KEYS.POS_LIVE_COUNTER(orgId || "_", tenantId)
+  try {
+    const val = await client.get<number>(key)
+    return val ?? 0
+  } catch (error) {
+    console.error('POS live counter read error:', error)
+    return 0
+  }
 }
 
 // Export the Redis client getter for direct access when needed

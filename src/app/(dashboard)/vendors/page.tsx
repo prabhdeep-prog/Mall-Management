@@ -28,8 +28,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
+import { AddVendorDialog } from "@/components/vendors/add-vendor-dialog"
+import { CreateWorkOrderDialog } from "@/components/work-orders/create-work-order-dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,9 +40,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Truck,
   Plus,
@@ -63,8 +62,15 @@ import {
   TrendingUp,
   AlertTriangle,
   Award,
+  Wrench,
+  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
+import { useRouter } from "next/navigation"
 import { format } from "date-fns"
 
 interface Vendor {
@@ -115,183 +121,84 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "bg-yellow-100 text-yellow-800" },
 }
 
-// Demo vendor data
-const demoVendors: Vendor[] = [
-  {
-    id: "1",
-    organizationId: "org-1",
-    name: "CoolTech HVAC Solutions",
-    category: "hvac",
-    contactPerson: "Rajesh Kumar",
-    email: "rajesh@cooltech.in",
-    phone: "+91 98765 43210",
-    address: "123, Industrial Area, Phase 2, Gurgaon",
-    gstNumber: "27AABCU9603R1ZM",
-    panNumber: "AABCU9603R",
-    bankDetails: {
-      accountName: "CoolTech HVAC Solutions Pvt Ltd",
-      accountNumber: "12345678901234",
-      bankName: "HDFC Bank",
-      ifscCode: "HDFC0001234",
-    },
-    performanceRating: 4.5,
-    totalWorkOrders: 156,
-    completedWorkOrders: 148,
-    avgResponseTime: 2.5,
-    avgCompletionTime: 6.2,
-    totalAmountPaid: 4850000,
-    status: "active",
-    contractExpiry: "2026-12-31",
-    createdAt: "2022-03-15",
-  },
-  {
-    id: "2",
-    organizationId: "org-1",
-    name: "PowerGrid Electrical Services",
-    category: "electrical",
-    contactPerson: "Suresh Menon",
-    email: "suresh@powergrid.in",
-    phone: "+91 87654 32109",
-    address: "456, Sector 18, Noida",
-    gstNumber: "09AABCP9603R1ZM",
-    panNumber: "AABCP9603R",
-    bankDetails: null,
-    performanceRating: 4.2,
-    totalWorkOrders: 89,
-    completedWorkOrders: 85,
-    avgResponseTime: 1.8,
-    avgCompletionTime: 4.5,
-    totalAmountPaid: 2340000,
-    status: "active",
-    contractExpiry: "2026-06-30",
-    createdAt: "2023-01-10",
-  },
-  {
-    id: "3",
-    organizationId: "org-1",
-    name: "AquaFlow Plumbing",
-    category: "plumbing",
-    contactPerson: "Anil Sharma",
-    email: "anil@aquaflow.in",
-    phone: "+91 76543 21098",
-    address: "789, DLF Cyber City, Gurgaon",
-    gstNumber: "06AABCA9603R1ZM",
-    panNumber: "AABCA9603R",
-    bankDetails: {
-      accountName: "AquaFlow Plumbing",
-      accountNumber: "98765432109876",
-      bankName: "ICICI Bank",
-      ifscCode: "ICIC0001234",
-    },
-    performanceRating: 3.8,
-    totalWorkOrders: 67,
-    completedWorkOrders: 58,
-    avgResponseTime: 3.2,
-    avgCompletionTime: 8.1,
-    totalAmountPaid: 1560000,
-    status: "active",
-    contractExpiry: "2025-09-30",
-    createdAt: "2023-06-20",
-  },
-  {
-    id: "4",
-    organizationId: "org-1",
-    name: "CleanSweep Facilities",
-    category: "cleaning",
-    contactPerson: "Priya Singh",
-    email: "priya@cleansweep.in",
-    phone: "+91 65432 10987",
-    address: "321, Connaught Place, New Delhi",
-    gstNumber: "07AABCC9603R1ZM",
-    panNumber: "AABCC9603R",
-    bankDetails: null,
-    performanceRating: 4.7,
-    totalWorkOrders: 245,
-    completedWorkOrders: 243,
-    avgResponseTime: 0.5,
-    avgCompletionTime: 2.0,
-    totalAmountPaid: 3200000,
-    status: "active",
-    contractExpiry: "2026-03-31",
-    createdAt: "2021-08-01",
-  },
-  {
-    id: "5",
-    organizationId: "org-1",
-    name: "SecureShield Security",
-    category: "security",
-    contactPerson: "Major Vikram Rao (Retd)",
-    email: "vikram@secureshield.in",
-    phone: "+91 54321 09876",
-    address: "567, Defence Colony, New Delhi",
-    gstNumber: "07AABCS9603R1ZM",
-    panNumber: "AABCS9603R",
-    bankDetails: {
-      accountName: "SecureShield Security Pvt Ltd",
-      accountNumber: "11223344556677",
-      bankName: "State Bank of India",
-      ifscCode: "SBIN0001234",
-    },
-    performanceRating: 4.9,
-    totalWorkOrders: 12,
-    completedWorkOrders: 12,
-    avgResponseTime: 0.2,
-    avgCompletionTime: 1.0,
-    totalAmountPaid: 8500000,
-    status: "active",
-    contractExpiry: "2027-01-31",
-    createdAt: "2020-05-15",
-  },
-  {
-    id: "6",
-    organizationId: "org-1",
-    name: "OTIS Elevator Company",
-    category: "elevator",
-    contactPerson: "Deepak Verma",
-    email: "deepak.verma@otis.com",
-    phone: "+91 43210 98765",
-    address: "890, Industrial Park, Chennai",
-    gstNumber: "33AABCO9603R1ZM",
-    panNumber: "AABCO9603R",
-    bankDetails: null,
-    performanceRating: 4.6,
-    totalWorkOrders: 34,
-    completedWorkOrders: 32,
-    avgResponseTime: 1.5,
-    avgCompletionTime: 5.0,
-    totalAmountPaid: 2100000,
-    status: "active",
-    contractExpiry: "2026-08-15",
-    createdAt: "2022-11-01",
-  },
-]
-
 export default function VendorsPage() {
   const { toast } = useToast()
-  const [vendors, setVendors] = React.useState<Vendor[]>(demoVendors)
-  const [isLoading, setIsLoading] = React.useState(false)
+  const router = useRouter()
+  const [vendors, setVendors] = React.useState<Vendor[]>([])
+  const [isLoading, setIsLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [categoryFilter, setCategoryFilter] = React.useState<string>("all")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog states
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
   const [viewDialogOpen, setViewDialogOpen] = React.useState(false)
+  const [createWODialogOpen, setCreateWODialogOpen] = React.useState(false)
   const [selectedVendor, setSelectedVendor] = React.useState<Vendor | null>(null)
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
-  // Form state
-  const [formData, setFormData] = React.useState({
-    name: "",
-    category: "",
-    contactPerson: "",
-    email: "",
-    phone: "",
-    address: "",
-    gstNumber: "",
-    panNumber: "",
-    contractExpiry: "",
-  })
+  const fetchVendors = React.useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const res = await fetch("/api/vendors")
+      const json = await res.json()
+      if (json.success && Array.isArray(json.data)) {
+        const mapped: Vendor[] = json.data.map((v: any) => ({
+          id: v.id,
+          organizationId: v.organizationId || "",
+          name: v.name,
+          category: v.type || v.category || "general",
+          contactPerson: v.contactPerson || null,
+          email: v.email || null,
+          phone: v.phone || null,
+          address: v.address || null,
+          gstNumber: v.gstin || null,
+          panNumber: v.pan || null,
+          bankDetails: v.metadata?.bankDetails || null,
+          performanceRating: parseFloat(v.rating) || 0,
+          totalWorkOrders: v.totalJobs || 0,
+          completedWorkOrders: v.completedJobs || 0,
+          avgResponseTime: v.avgResponseTimeHours ? parseFloat(v.avgResponseTimeHours) : null,
+          avgCompletionTime: v.avgCompletionTimeHours ? parseFloat(v.avgCompletionTimeHours) : null,
+          totalAmountPaid: 0,
+          status: v.status || "active",
+          contractExpiry: v.metadata?.contractExpiry || null,
+          createdAt: v.createdAt || new Date().toISOString(),
+        }))
+        setVendors(mapped)
+      } else {
+        setVendors([])
+      }
+    } catch (err) {
+      console.error("Failed to fetch vendors:", err)
+      setVendors([])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  React.useEffect(() => { fetchVendors() }, [fetchVendors])
+
+  const handleDeactivate = async (vendor: Vendor) => {
+    const action = vendor.status === "active" ? "deactivate" : "reactivate"
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} ${vendor.name}?`)) return
+    try {
+      const res = await fetch(`/api/vendors/${vendor.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: vendor.status === "active" ? "inactive" : "active" }),
+      })
+      if (!res.ok) throw new Error("Failed to update vendor status")
+      toast({
+        title: vendor.status === "active" ? "Vendor deactivated" : "Vendor reactivated",
+        description: `${vendor.name} has been ${action}d.`,
+      })
+      fetchVendors()
+    } catch {
+      toast({ title: "Error", description: "Failed to update vendor status.", variant: "destructive" })
+    }
+  }
 
   const getRatingStars = (rating: number) => {
     const fullStars = Math.floor(rating)
@@ -330,66 +237,29 @@ export default function VendorsPage() {
     return true
   })
 
+  const totalPages = Math.ceil(filteredVendors.length / pageSize)
+  const paginatedVendors = filteredVendors.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, categoryFilter])
+
+  const totalWOs = vendors.reduce((acc, v) => acc + v.totalWorkOrders, 0)
+  const completedWOs = vendors.reduce((acc, v) => acc + v.completedWorkOrders, 0)
   const stats = {
     total: vendors.length,
     active: vendors.filter((v) => v.status === "active").length,
-    avgRating: vendors.reduce((acc, v) => acc + v.performanceRating, 0) / vendors.length,
+    avgRating: vendors.length > 0
+      ? vendors.reduce((acc, v) => acc + v.performanceRating, 0) / vendors.length
+      : 0,
     totalPaid: vendors.reduce((acc, v) => acc + v.totalAmountPaid, 0),
-    totalWorkOrders: vendors.reduce((acc, v) => acc + v.totalWorkOrders, 0),
-    completionRate:
-      (vendors.reduce((acc, v) => acc + v.completedWorkOrders, 0) /
-        vendors.reduce((acc, v) => acc + v.totalWorkOrders, 0)) *
-      100,
+    totalWorkOrders: totalWOs,
+    completionRate: totalWOs > 0 ? (completedWOs / totalWOs) * 100 : 0,
   }
 
-  const handleCreateVendor = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-
-      const newVendor: Vendor = {
-        id: crypto.randomUUID(),
-        organizationId: "org-1",
-        ...formData,
-        bankDetails: null,
-        performanceRating: 0,
-        totalWorkOrders: 0,
-        completedWorkOrders: 0,
-        avgResponseTime: null,
-        avgCompletionTime: null,
-        totalAmountPaid: 0,
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      }
-
-      setVendors((prev) => [newVendor, ...prev])
-      toast({
-        title: "Success",
-        description: "Vendor added successfully!",
-      })
-      setAddDialogOpen(false)
-      setFormData({
-        name: "",
-        category: "",
-        contactPerson: "",
-        email: "",
-        phone: "",
-        address: "",
-        gstNumber: "",
-        panNumber: "",
-        contractExpiry: "",
-      })
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to add vendor. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -402,141 +272,19 @@ export default function VendorsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setIsLoading(true)} disabled={isLoading}>
+          <Button variant="outline" onClick={() => fetchVendors()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Vendor
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[550px]">
-              <form onSubmit={handleCreateVendor}>
-                <DialogHeader>
-                  <DialogTitle>Add New Vendor</DialogTitle>
-                  <DialogDescription>Register a new service provider or contractor.</DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="name">Company Name *</Label>
-                    <Input
-                      id="name"
-                      placeholder="e.g., CoolTech HVAC Solutions"
-                      value={formData.name}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="category">Category *</Label>
-                      <Select
-                        value={formData.category}
-                        onValueChange={(value) => setFormData((prev) => ({ ...prev, category: value }))}
-                        required
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="hvac">HVAC</SelectItem>
-                          <SelectItem value="electrical">Electrical</SelectItem>
-                          <SelectItem value="plumbing">Plumbing</SelectItem>
-                          <SelectItem value="cleaning">Cleaning</SelectItem>
-                          <SelectItem value="security">Security</SelectItem>
-                          <SelectItem value="landscaping">Landscaping</SelectItem>
-                          <SelectItem value="elevator">Elevator</SelectItem>
-                          <SelectItem value="pest_control">Pest Control</SelectItem>
-                          <SelectItem value="it">IT Services</SelectItem>
-                          <SelectItem value="general">General</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="contactPerson">Contact Person</Label>
-                      <Input
-                        id="contactPerson"
-                        placeholder="Primary contact name"
-                        value={formData.contactPerson}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, contactPerson: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="vendor@example.com"
-                        value={formData.email}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="phone">Phone</Label>
-                      <Input
-                        id="phone"
-                        placeholder="+91 98765 43210"
-                        value={formData.phone}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="address">Address</Label>
-                    <Textarea
-                      id="address"
-                      placeholder="Full address"
-                      value={formData.address}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="gstNumber">GST Number</Label>
-                      <Input
-                        id="gstNumber"
-                        placeholder="27AABCU9603R1ZM"
-                        value={formData.gstNumber}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, gstNumber: e.target.value }))}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="panNumber">PAN Number</Label>
-                      <Input
-                        id="panNumber"
-                        placeholder="AABCU9603R"
-                        value={formData.panNumber}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, panNumber: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="contractExpiry">Contract Expiry Date</Label>
-                    <Input
-                      id="contractExpiry"
-                      type="date"
-                      value={formData.contractExpiry}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, contractExpiry: e.target.value }))}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Add Vendor
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button className="gap-2" onClick={() => setAddDialogOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add Vendor
+          </Button>
+          <AddVendorDialog
+            open={addDialogOpen}
+            onOpenChange={setAddDialogOpen}
+            onSuccess={fetchVendors}
+          />
         </div>
       </div>
 
@@ -700,7 +448,28 @@ export default function VendorsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredVendors.map((vendor) => {
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-12 text-center">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                  </TableCell>
+                </TableRow>
+              ) : filteredVendors.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-12 text-center">
+                    <Truck className="h-10 w-10 mx-auto text-muted-foreground/40 mb-3" />
+                    <p className="font-medium text-muted-foreground">
+                      {vendors.length === 0 ? "No vendors yet" : "No vendors match your filters"}
+                    </p>
+                    {vendors.length === 0 && (
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Click <strong>Add Vendor</strong> to get started
+                      </p>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+              {!isLoading && paginatedVendors.map((vendor) => {
                 const category = categoryConfig[vendor.category]
                 const status = statusConfig[vendor.status]
                 const { fullStars, hasHalfStar } = getRatingStars(vendor.performanceRating)
@@ -790,18 +559,29 @@ export default function VendorsPage() {
                             <Eye className="mr-2 h-4 w-4" />
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Edit
+                          <DropdownMenuItem
+                            onClick={() => {
+                              setSelectedVendor(vendor)
+                              setViewDialogOpen(false)
+                              setCreateWODialogOpen(true)
+                            }}
+                          >
+                            <Wrench className="mr-2 h-4 w-4" />
+                            Create Work Order
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <FileText className="mr-2 h-4 w-4" />
+                          <DropdownMenuItem
+                            onClick={() => router.push(`/work-orders?assignedTo=${vendor.id}`)}
+                          >
+                            <ExternalLink className="mr-2 h-4 w-4" />
                             View Work Orders
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-red-600">
+                          <DropdownMenuItem
+                            className={vendor.status === "active" ? "text-red-600" : "text-green-600"}
+                            onClick={() => handleDeactivate(vendor)}
+                          >
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Deactivate
+                            {vendor.status === "active" ? "Deactivate" : "Reactivate"}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -811,8 +591,55 @@ export default function VendorsPage() {
               })}
             </TableBody>
           </Table>
+          {filteredVendors.length > 0 && (
+            <div className="flex items-center justify-between border-t pt-4 mt-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredVendors.length)} of {filteredVendors.length}
+                </span>
+                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                  <SelectTrigger className="h-8 w-[70px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span>per page</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-3 text-sm font-medium">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {/* Create Work Order Dialog */}
+      <CreateWorkOrderDialog
+        open={createWODialogOpen}
+        onOpenChange={setCreateWODialogOpen}
+        onSuccess={() => {
+          toast({ title: "Work order created", description: selectedVendor ? `Work order assigned to ${selectedVendor.name}.` : "Work order created." })
+        }}
+      />
 
       {/* View Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
@@ -965,7 +792,15 @@ export default function VendorsPage() {
             <Button variant="outline" onClick={() => setViewDialogOpen(false)}>
               Close
             </Button>
-            <Button>Create Work Order</Button>
+            <Button
+              onClick={() => {
+                setViewDialogOpen(false)
+                setCreateWODialogOpen(true)
+              }}
+            >
+              <Wrench className="h-4 w-4 mr-2" />
+              Create Work Order
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

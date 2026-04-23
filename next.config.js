@@ -8,7 +8,16 @@ const nextConfig = {
       bodySizeLimit: '2mb',
     },
   },
+  async rewrites() {
+    return [
+      // /tenant/* → /portal/* URL mapping
+      // The portal app lives at src/app/(portal)/portal/ but is exposed as /tenant/*
+      { source: '/tenant',             destination: '/portal'             },
+      { source: '/tenant/:path*',      destination: '/portal/:path*'     },
+      // Login page rewrite
+      { source: '/tenant/login',       destination: '/portal/login'      },
+    ]
+  },
 }
 
 module.exports = nextConfig
-

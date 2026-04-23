@@ -1,9 +1,25 @@
 import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { complianceRequirements } from "@/lib/db/schema"
-import { eq, and } from "drizzle-orm"
+import { eq, and, sql } from "drizzle-orm"
 import { PERMISSIONS, requirePermission } from "@/lib/auth/rbac"
 import { z } from "zod"
+
+const updateComplianceSchema = z.object({
+  id: z.string().uuid(),
+  requirementType: z.string().optional(),
+  title: z.string().min(1).optional(),
+  description: z.string().optional().nullable(),
+  authority: z.string().optional().nullable(),
+  frequency: z.string().optional().nullable(),
+  dueDate: z.string().optional().nullable(),
+  nextDueDate: z.string().optional().nullable(),
+  status: z.enum(["pending", "in_progress", "completed", "overdue"]).optional(),
+  riskLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
+  autoReminder: z.boolean().optional(),
+  reminderDays: z.array(z.number()).optional(),
+  documentsRequired: z.array(z.string()).optional(),
+})
 
 const createComplianceSchema = z.object({
   propertyId: z.string().uuid("Invalid property ID"),
@@ -90,6 +106,74 @@ export async function POST(request: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: error.errors }, { status: 400 })
     }
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  const { authorized, error } = await requirePermission(PERMISSIONS.COMPLIANCE_EDIT)
+  if (!authorized) {
+    return NextResponse.json({ error }, { status: 403 })
+  }
+
+  try {
+    const body = await request.json()
+    const data = updateComplianceSchema.parse(body)
+    const { id, ...updateFields } = data
+
+    const existing = await db.query.complianceRequirements.findFirst({
+      where: eq(complianceRequirements.id, id),
+    })
+    if (!existing) {
+      return NextResponse.json({ error: "Compliance requirement not found" }, { status: 404 })
+    }
+
+    const payload: Record<string, unknown> = { updatedAt: new Date() }
+    for (const [key, value] of Object.entries(updateFields)) {
+      if (value !== undefined) payload[key] = value
+    }
+
+    const [updated] = await db
+      .update(complianceRequirements)
+      .set(payload)
+      .where(eq(complianceRequirements.id, id))
+      .returning()
+
+    return NextResponse.json({ success: true, data: updated })
+  } catch (err: any) {
+    console.error("PATCH compliance error:", err)
+    if (err instanceof z.ZodError) {
+      return NextResponse.json({ error: err.errors.map((e: z.ZodIssue) => `${e.path.join(".")}: ${e.message}`).join("; ") }, { status: 400 })
+    }
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const { authorized, error } = await requirePermission(PERMISSIONS.COMPLIANCE_DELETE)
+  if (!authorized) {
+    return NextResponse.json({ error }, { status: 403 })
+  }
+
+  try {
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get("id")
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 })
+    }
+
+    const existing = await db.query.complianceRequirements.findFirst({
+      where: eq(complianceRequirements.id, id),
+    })
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 })
+    }
+
+    await db.delete(complianceRequirements).where(eq(complianceRequirements.id, id))
+
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    console.error("DELETE compliance error:", err)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

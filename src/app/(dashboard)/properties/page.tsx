@@ -423,8 +423,10 @@ export default function PropertiesPage() {
       if (response.ok) {
         const data = await response.json()
         setProperties(data.data || [])
-        // Also update the global property store so the header dropdown refreshes
-        refreshGlobalPropertyStore()
+        if (bustCache) {
+          // Only refresh the global store when data was actually mutated
+          refreshGlobalPropertyStore(true)
+        }
       }
     } catch (error) {
       console.error("Error fetching properties:", error)

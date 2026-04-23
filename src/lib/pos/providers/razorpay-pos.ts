@@ -14,9 +14,12 @@
 
 import type { POSProvider, POSSalesRecord, POSProviderConfig } from "../types"
 import { createHmac, timingSafeEqual } from "crypto"
+import { withRetry, isRetryableHttpError } from "@/lib/utils/retry"
+import { logger } from "@/lib/logger"
+import { withCircuitBreaker } from "../circuit-breaker"
 
 const RAZORPAY_BASE_URL = "https://api.razorpay.com/v1"
-const TIMEOUT_MS        = 15_000
+const TIMEOUT_MS        = 8_000   // reduced from 15 s
 
 // ── API types ─────────────────────────────────────────────────────────────────
 
@@ -152,6 +155,27 @@ export class RazorpayPOSProvider implements POSProvider {
   }
 
   private async request<T>(path: string): Promise<T> {
+    return withCircuitBreaker("razorpay_pos", () => 
+      withRetry(
+        () => this.doRequest<T>(path),
+        {
+          attempts:     3,
+          initialDelay: 1_000,
+          isRetryable:  isRetryableHttpError,
+          onRetry: (err, attempt, delay) => {
+            logger.warn("razorpay-pos: retrying request", {
+              path,
+              attempt,
+              nextDelayMs: delay,
+              error: err.message,
+            })
+          },
+        },
+      )
+    )
+  }
+
+  private async doRequest<T>(path: string): Promise<T> {
     const url = `${RAZORPAY_BASE_URL}${path}`
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)

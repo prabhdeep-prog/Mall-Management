@@ -54,6 +54,10 @@ import {
   Shield,
   Mail,
   Phone,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { PermissionGate, PERMISSIONS } from "@/components/auth/permission-gate"
@@ -116,7 +120,9 @@ export default function UsersPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [roleFilter, setRoleFilter] = React.useState<string>("all")
-  
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
+
   // Dialog states
   const [addUserDialogOpen, setAddUserDialogOpen] = React.useState(false)
   const [viewUserDialogOpen, setViewUserDialogOpen] = React.useState(false)
@@ -323,6 +329,16 @@ export default function UsersPage() {
     }
     return true
   })
+
+  const totalPages = Math.ceil(filteredUsers.length / pageSize)
+  const paginatedUsers = filteredUsers.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, roleFilter])
 
   const stats = {
     total: users.length,
@@ -588,6 +604,7 @@ export default function UsersPage() {
                 </p>
               </div>
             ) : (
+              <>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -600,7 +617,7 @@ export default function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredUsers.map((user) => (
+                  {paginatedUsers.map((user) => (
                     <TableRow key={user.id}>
                       <TableCell>
                         <div className="flex items-center gap-3">
@@ -717,6 +734,45 @@ export default function UsersPage() {
                   ))}
                 </TableBody>
               </Table>
+              {filteredUsers.length > 0 && (
+                <div className="flex items-center justify-between border-t pt-4 mt-4 px-4 pb-4">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <span>
+                      Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredUsers.length)} of {filteredUsers.length}
+                    </span>
+                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                      <SelectTrigger className="h-8 w-[70px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <span>per page</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="px-3 text-sm font-medium">
+                      {currentPage} / {totalPages || 1}
+                    </span>
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </CardContent>
         </Card>

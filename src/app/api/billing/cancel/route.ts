@@ -49,14 +49,14 @@ export async function POST(request: NextRequest) {
     .select({
       id:                       subscriptions.id,
       provider:                 subscriptions.provider,
-      provider_subscription_id: subscriptions.provider_subscription_id,
+      provider_subscription_id: subscriptions.providerSubscriptionId,
       status:                   subscriptions.status,
-      current_period_end:       subscriptions.current_period_end,
+      current_period_end:       subscriptions.currentPeriodEnd,
     })
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.organization_id, orgId),
+        eq(subscriptions.organizationId, orgId),
         sql`status NOT IN ('cancelled', 'expired')`
       )
     )
@@ -100,9 +100,9 @@ export async function POST(request: NextRequest) {
       await serviceDb
         .update(subscriptions)
         .set({
-          cancel_at:  cancelAt,
+          cancelAt:   cancelAt,
           metadata:   sql`metadata || '{"cancel_requested_at": "${now.toISOString()}"}'::jsonb`,
-          updated_at: now,
+          updatedAt:  now,
         })
         .where(eq(subscriptions.id, current.id))
 
@@ -118,8 +118,8 @@ export async function POST(request: NextRequest) {
         .update(subscriptions)
         .set({
           status:       "cancelled",
-          cancelled_at: now,
-          updated_at:   now,
+          cancelledAt:  now,
+          updatedAt:    now,
         })
         .where(eq(subscriptions.id, current.id))
 

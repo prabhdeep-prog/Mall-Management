@@ -25,7 +25,7 @@ export function getPOSProvider(
   config: POSProviderConfig,
 ): POSProvider {
   if (USE_MOCK) {
-    return new MockPOSProvider()
+    return new MockPOSProvider(config, providerKey)
   }
 
   switch (providerKey) {

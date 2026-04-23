@@ -56,6 +56,10 @@ import {
   Calendar,
   Bell,
   Bot,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { formatDistanceToNow, format, differenceInDays } from "date-fns"
@@ -219,6 +223,8 @@ export default function CompliancePage() {
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [typeFilter, setTypeFilter] = React.useState<string>("all")
   const [riskFilter, setRiskFilter] = React.useState<string>("all")
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
   // Dialog states
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
@@ -266,6 +272,16 @@ export default function CompliancePage() {
     if (riskFilter !== "all" && req.riskLevel !== riskFilter) return false
     return true
   })
+
+  const totalPages = Math.ceil(filteredRequirements.length / pageSize)
+  const paginatedRequirements = filteredRequirements.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter, typeFilter, riskFilter])
 
   const stats = {
     total: requirements.length,
@@ -642,6 +658,7 @@ export default function CompliancePage() {
       {/* Requirements Table */}
       <Card>
         <CardContent className="p-0">
+          <>
           <Table>
             <TableHeader>
               <TableRow>
@@ -655,7 +672,7 @@ export default function CompliancePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredRequirements.map((req) => {
+              {paginatedRequirements.map((req) => {
                 const status = statusConfig[req.status]
                 const risk = riskConfig[req.riskLevel]
                 const type = typeConfig[req.requirementType]
@@ -753,6 +770,45 @@ export default function CompliancePage() {
               })}
             </TableBody>
           </Table>
+          {filteredRequirements.length > 0 && (
+            <div className="flex items-center justify-between border-t pt-4 mt-4 px-4 pb-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredRequirements.length)} of {filteredRequirements.length}
+                </span>
+                <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                  <SelectTrigger className="h-8 w-[70px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span>per page</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                  <ChevronsLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-3 text-sm font-medium">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                  <ChevronsRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+          </>
         </CardContent>
       </Card>
 

@@ -3,7 +3,7 @@ import { z } from "zod"
 import { sql, eq, and } from "drizzle-orm"
 import { auth } from "@/lib/auth"
 import { serviceDb } from "@/lib/db"
-import { subscriptions, billing_plans, users, organizations } from "@/lib/db/schema"
+import { subscriptions, billingPlans, users, organizations } from "@/lib/db/schema"
 import {
   createOrFetchRazorpayCustomer,
   createRazorpaySubscription,
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     .from(subscriptions)
     .where(
       and(
-        eq(subscriptions.organization_id, orgId),
+        eq(subscriptions.organizationId, orgId),
         sql`status NOT IN ('cancelled', 'expired')`
       )
     )
@@ -65,8 +65,8 @@ export async function POST(request: NextRequest) {
   // Fetch plan + provider IDs
   const [planRow] = await serviceDb
     .select()
-    .from(billing_plans)
-    .where(eq(billing_plans.slug, planSlug))
+    .from(billingPlans)
+    .where(eq(billingPlans.slug, planSlug))
     .limit(1)
 
   if (!planRow) {
@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
   const [adminUser] = await serviceDb
     .select({ email: users.email, name: users.name })
     .from(users)
-    .where(eq(users.organization_id, orgId))
-    .orderBy(users.created_at)
+    .where(eq(users.organizationId, orgId))
+    .orderBy(users.createdAt)
     .limit(1)
 
   if (!orgRow || !adminUser) {
@@ -98,8 +98,8 @@ export async function POST(request: NextRequest) {
     if (provider === "razorpay") {
       const razorpayPlanId =
         billingCycle === "monthly"
-          ? planRow.razorpay_plan_id_monthly
-          : planRow.razorpay_plan_id_yearly
+          ? planRow.razorpayPlanIdMonthly
+          : planRow.razorpayPlanIdYearly
 
       if (!razorpayPlanId) {
         return NextResponse.json(
@@ -113,11 +113,11 @@ export async function POST(request: NextRequest) {
       let customerId = ""
       if (existingSub) {
         const [existingSubRow] = await serviceDb
-          .select({ provider_customer_id: subscriptions.provider_customer_id })
+          .select({ providerCustomerId: subscriptions.providerCustomerId })
           .from(subscriptions)
           .where(eq(subscriptions.id, existingSub.id))
           .limit(1)
-        customerId = existingSubRow?.provider_customer_id ?? ""
+        customerId = existingSubRow?.providerCustomerId ?? ""
       }
 
       if (!customerId) {
@@ -140,14 +140,14 @@ export async function POST(request: NextRequest) {
 
       // Record subscription row (status=trialing until webhook confirms)
       await serviceDb.insert(subscriptions).values({
-        organization_id:          orgId,
-        plan_id:                  planRow.id,
-        provider:                 "razorpay",
-        provider_subscription_id: result.subscriptionId,
-        provider_customer_id:     result.customerId,
-        status:                   "trialing",
-        billing_cycle:            billingCycle,
-        trial_ends_at:            trialDays ? new Date(Date.now() + trialDays * 86_400_000) : undefined,
+        organizationId:          orgId,
+        planId:                  planRow.id,
+        provider:                "razorpay",
+        providerSubscriptionId:  result.subscriptionId,
+        providerCustomerId:      result.customerId,
+        status:                  "trialing",
+        billingCycle:            billingCycle,
+        trialEndsAt:             trialDays ? new Date(Date.now() + trialDays * 86_400_000) : undefined,
       }).onConflictDoNothing()
 
       return NextResponse.json({
@@ -160,8 +160,8 @@ export async function POST(request: NextRequest) {
     if (provider === "stripe") {
       const priceId =
         billingCycle === "monthly"
-          ? planRow.stripe_price_id_monthly
-          : planRow.stripe_price_id_yearly
+          ? planRow.stripePriceIdMonthly
+          : planRow.stripePriceIdYearly
 
       if (!priceId) {
         return NextResponse.json(
@@ -187,13 +187,13 @@ export async function POST(request: NextRequest) {
 
       // Stripe subscription is confirmed via webhook after checkout
       await serviceDb.insert(subscriptions).values({
-        organization_id:      orgId,
-        plan_id:              planRow.id,
-        provider:             "stripe",
-        provider_customer_id: customerId,
-        status:               "trialing",
-        billing_cycle:        billingCycle,
-        trial_ends_at:        trialDays ? new Date(Date.now() + trialDays * 86_400_000) : undefined,
+        organizationId:      orgId,
+        planId:              planRow.id,
+        provider:            "stripe",
+        providerCustomerId:  customerId,
+        status:              "trialing",
+        billingCycle:        billingCycle,
+        trialEndsAt:         trialDays ? new Date(Date.now() + trialDays * 86_400_000) : undefined,
         metadata:             { stripe_checkout_session_id: result.sessionId },
       }).onConflictDoNothing()
 

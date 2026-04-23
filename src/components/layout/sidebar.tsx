@@ -26,6 +26,9 @@ import {
   UserCog,
   FileSignature,
   IndianRupee,
+  FileText,
+  ScrollText,
+  ClipboardList,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -55,6 +58,12 @@ const navigation = [
         href: "/tenants",
         icon: Users,
         description: "Tenant relationships",
+      },
+      {
+        title: "Onboarding",
+        href: "/tenants/onboarding",
+        icon: ClipboardList,
+        description: "Tenant onboarding workflow",
       },
       {
         title: "Leases",
@@ -108,6 +117,23 @@ const navigation = [
         href: "/approvals",
         icon: CheckCircle,
         description: "Review pending decisions",
+      },
+    ],
+  },
+  {
+    title: "Finance",
+    items: [
+      {
+        title: "Invoices",
+        href: "/finance/invoices",
+        icon: FileText,
+        description: "Invoice management & lifecycle",
+      },
+      {
+        title: "Audit Log",
+        href: "/finance/audit",
+        icon: ScrollText,
+        description: "Immutable financial audit trail",
       },
     ],
   },

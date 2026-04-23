@@ -27,7 +27,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import {
   DropdownMenu,
@@ -36,18 +35,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   FileText,
   Plus,
   Search,
   Building2,
-  TrendingUp,
-  Calendar,
   RefreshCw,
   Loader2,
   Eye,
-  Pencil,
   MoreHorizontal,
   AlertTriangle,
   CheckCircle2,
@@ -55,17 +50,17 @@ import {
   XCircle,
   FileSignature,
   IndianRupee,
-  Wifi,
-  WifiOff,
-  Store,
-  CheckCircle,
-  Zap,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react"
 import { formatCurrency, cn } from "@/lib/utils"
 import Link from "next/link"
 import { useToast } from "@/components/ui/use-toast"
 import { usePropertyStore } from "@/stores/property-store"
-import { format, differenceInDays, addMonths } from "date-fns"
+import { format, differenceInDays } from "date-fns"
+import { CreateLeaseDialog } from "@/components/leases/create-lease-dialog"
 
 interface Lease {
   id: string
@@ -97,18 +92,6 @@ interface Lease {
   } | null
 }
 
-interface Tenant {
-  id: string
-  businessName: string
-  contactPerson: string | null
-}
-
-interface Property {
-  id: string
-  name: string
-  city: string
-  code: string
-}
 
 const statusConfig: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
   active: { color: "bg-emerald-100 text-emerald-700", label: "Active", icon: <CheckCircle2 className="h-3 w-3" /> },
@@ -127,83 +110,19 @@ const leaseTypeLabels: Record<string, string> = {
 
 export default function LeasesPage() {
   const { toast } = useToast()
-  const { selectedProperty } = usePropertyStore()
+  const { selectedProperty, properties, fetchProperties } = usePropertyStore()
   const [leases, setLeases] = React.useState<Lease[]>([])
-  const [tenants, setTenants] = React.useState<Tenant[]>([])
-  const [properties, setProperties] = React.useState<Property[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false)
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [selectedLease, setSelectedLease] = React.useState<Lease | null>(null)
   const [viewDialogOpen, setViewDialogOpen] = React.useState(false)
+  const [currentPage, setCurrentPage] = React.useState(1)
+  const [pageSize, setPageSize] = React.useState(10)
 
-  // Form state
-  const [leaseForm, setLeaseForm] = React.useState({
-    tenantId: "",
-    propertyId: "",
-    unitNumber: "",
-    floor: "",
-    zone: "",
-    areaSqft: "",
-    leaseType: "fixed_rent",
-    baseRent: "",
-    revenueSharePercentage: "",
-    camCharges: "",
-    securityDeposit: "",
-    startDate: "",
-    endDate: "",
-    escalationRate: "",
-    escalationFrequency: "12",
-    lockInPeriod: "",
-    terminationNoticeDays: "90",
-    fitOutPeriod: "",
-    rentFreePeriod: "",
-    // POS Integration fields (only for revenue_share & hybrid)
-    posProvider: "",
-    posStoreId: "",
-    posApiKey: "",
-    posSyncFrequency: "daily",
-  })
-
-  // POS connection test state
-  const [posTestStatus, setPosTestStatus] = React.useState<"idle" | "testing" | "success" | "error">("idle")
-  const [posTestMessage, setPosTestMessage] = React.useState("")
-
-  const isRevShareLease = leaseForm.leaseType === "revenue_share" || leaseForm.leaseType === "hybrid" || leaseForm.leaseType === "minimum_guarantee"
-
-  const handleTestPOSConnection = async () => {
-    if (!leaseForm.posProvider || !leaseForm.posStoreId || !leaseForm.posApiKey) {
-      setPosTestStatus("error")
-      setPosTestMessage("Please fill in provider, store ID, and API key")
-      return
-    }
-    setPosTestStatus("testing")
-    setPosTestMessage("")
-    try {
-      const res = await fetch("/api/pos/test-connection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: leaseForm.posProvider,
-          storeId: leaseForm.posStoreId,
-          apiKey: leaseForm.posApiKey,
-        }),
-      })
-      const result = await res.json()
-      if (result.success) {
-        setPosTestStatus("success")
-        setPosTestMessage(result.data.message || "Connection successful!")
-      } else {
-        setPosTestStatus("error")
-        setPosTestMessage(result.error || "Connection failed")
-      }
-    } catch {
-      setPosTestStatus("error")
-      setPosTestMessage("Failed to test connection")
-    }
-  }
+  // Ensure properties are loaded
+  React.useEffect(() => { fetchProperties() }, [fetchProperties])
 
   // Fetch leases
   const fetchLeases = React.useCallback(async () => {
@@ -226,118 +145,9 @@ export default function LeasesPage() {
     }
   }, [selectedProperty, statusFilter, toast])
 
-  // Fetch tenants for dropdown - based on form's selected property
-  const fetchTenantsForProperty = React.useCallback(async (propertyId: string) => {
-    if (!propertyId) {
-      setTenants([])
-      return
-    }
-    try {
-      const response = await fetch(`/api/tenants?propertyId=${propertyId}`)
-      if (response.ok) {
-        const result = await response.json()
-        setTenants(result.data || result || [])
-      }
-    } catch (error) {
-      console.error("Error fetching tenants:", error)
-      setTenants([])
-    }
-  }, [])
-
-  // Fetch properties for dropdown (always fresh data)
-  const fetchProperties = React.useCallback(async () => {
-    try {
-      const response = await fetch("/api/properties?refresh=true")
-      if (response.ok) {
-        const result = await response.json()
-        setProperties(result.data || result || [])
-      }
-    } catch (error) {
-      console.error("Error fetching properties:", error)
-    }
-  }, [])
-
   React.useEffect(() => {
     fetchLeases()
-    fetchProperties()
-  }, [fetchLeases, fetchProperties])
-
-  // Handle property change in the form - fetch tenants for selected property
-  const handlePropertyChange = React.useCallback((propertyId: string) => {
-    setLeaseForm(prev => ({ ...prev, propertyId, tenantId: "" })) // Reset tenant when property changes
-    fetchTenantsForProperty(propertyId)
-  }, [fetchTenantsForProperty])
-
-  // Create lease handler
-  const handleCreateLease = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSubmitting(true)
-    try {
-      const response = await fetch("/api/leases", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...leaseForm,
-          areaSqft: parseFloat(leaseForm.areaSqft),
-          baseRent: leaseForm.baseRent ? parseFloat(leaseForm.baseRent) : null,
-          revenueSharePercentage: leaseForm.revenueSharePercentage ? parseFloat(leaseForm.revenueSharePercentage) : null,
-          camCharges: leaseForm.camCharges ? parseFloat(leaseForm.camCharges) : null,
-          securityDeposit: leaseForm.securityDeposit ? parseFloat(leaseForm.securityDeposit) : null,
-          escalationRate: leaseForm.escalationRate ? parseFloat(leaseForm.escalationRate) : null,
-          escalationFrequency: leaseForm.escalationFrequency ? parseInt(leaseForm.escalationFrequency) : null,
-          lockInPeriod: leaseForm.lockInPeriod ? parseInt(leaseForm.lockInPeriod) : null,
-          terminationNoticeDays: leaseForm.terminationNoticeDays ? parseInt(leaseForm.terminationNoticeDays) : null,
-          fitOutPeriod: leaseForm.fitOutPeriod ? parseInt(leaseForm.fitOutPeriod) : null,
-          rentFreePeriod: leaseForm.rentFreePeriod ? parseInt(leaseForm.rentFreePeriod) : null,
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to create lease")
-      }
-
-      toast({ title: "Success", description: "Lease created successfully!" })
-      setCreateDialogOpen(false)
-      setPosTestStatus("idle")
-      setPosTestMessage("")
-      setLeaseForm({
-        tenantId: "",
-        propertyId: "",
-        unitNumber: "",
-        floor: "",
-        zone: "",
-        areaSqft: "",
-        leaseType: "fixed_rent",
-        baseRent: "",
-        revenueSharePercentage: "",
-        camCharges: "",
-        securityDeposit: "",
-        startDate: "",
-        endDate: "",
-        escalationRate: "",
-        escalationFrequency: "12",
-        lockInPeriod: "",
-        terminationNoticeDays: "90",
-        fitOutPeriod: "",
-        rentFreePeriod: "",
-        posProvider: "",
-        posStoreId: "",
-        posApiKey: "",
-        posSyncFrequency: "daily",
-      })
-      fetchLeases()
-    } catch (error) {
-      console.error("Error creating lease:", error)
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create lease",
-        variant: "destructive",
-      })
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
+  }, [fetchLeases])
 
   // Stats calculations
   const activeLeases = leases.filter(l => l.status === "active").length
@@ -357,12 +167,22 @@ export default function LeasesPage() {
 
   // Filter leases
   const filteredLeases = leases.filter(lease => {
-    const matchesSearch = 
+    const matchesSearch =
       lease.tenant?.businessName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lease.unitNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       lease.property?.name.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesSearch
   })
+
+  const totalPages = Math.ceil(filteredLeases.length / pageSize)
+  const paginatedLeases = filteredLeases.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  )
+
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, statusFilter])
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -379,306 +199,16 @@ export default function LeasesPage() {
           <Button variant="outline" size="sm" className="gap-1" onClick={() => fetchLeases()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Button>
-          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-1 bg-emerald-500 hover:bg-emerald-600">
-                <Plus className="h-4 w-4" /> Create Lease
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
-              <form onSubmit={handleCreateLease}>
-                <DialogHeader>
-                  <DialogTitle>Create New Lease</DialogTitle>
-                  <DialogDescription>Set up a lease agreement for a tenant</DialogDescription>
-                </DialogHeader>
-
-                <Tabs defaultValue="basic" className="mt-4">
-                  <TabsList className={cn("grid w-full", isRevShareLease ? "grid-cols-4" : "grid-cols-3")}>
-                    <TabsTrigger value="basic">Basic Info</TabsTrigger>
-                    <TabsTrigger value="financial">Financial Terms</TabsTrigger>
-                    <TabsTrigger value="terms">Lease Terms</TabsTrigger>
-                    {isRevShareLease && (
-                      <TabsTrigger value="pos" className="gap-1">
-                        <Wifi className="h-3 w-3" /> POS Integration
-                      </TabsTrigger>
-                    )}
-                  </TabsList>
-
-                  {/* Basic Info Tab */}
-                  <TabsContent value="basic" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Property *</label>
-                        <Select value={leaseForm.propertyId} onValueChange={handlePropertyChange}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select property" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {properties.map(p => (
-                              <SelectItem key={p.id} value={p.id}>{p.name} ({p.city})</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Tenant *</label>
-                        <Select 
-                          value={leaseForm.tenantId} 
-                          onValueChange={(v) => setLeaseForm({...leaseForm, tenantId: v})}
-                          disabled={!leaseForm.propertyId}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={!leaseForm.propertyId ? "Select property first" : "Select tenant"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {tenants.length === 0 ? (
-                              <div className="px-2 py-4 text-sm text-muted-foreground text-center">
-                                No tenants found for this property
-                              </div>
-                            ) : (
-                              tenants.map(t => (
-                                <SelectItem key={t.id} value={t.id}>{t.businessName}</SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Unit Number *</label>
-                        <Input value={leaseForm.unitNumber} onChange={(e) => setLeaseForm({...leaseForm, unitNumber: e.target.value})} placeholder="e.g., G-12" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Floor</label>
-                        <Select value={leaseForm.floor} onValueChange={(v) => setLeaseForm({...leaseForm, floor: v})}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select floor" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="basement">Basement</SelectItem>
-                            <SelectItem value="ground">Ground Floor</SelectItem>
-                            <SelectItem value="1">1st Floor</SelectItem>
-                            <SelectItem value="2">2nd Floor</SelectItem>
-                            <SelectItem value="3">3rd Floor</SelectItem>
-                            <SelectItem value="4">4th Floor</SelectItem>
-                            <SelectItem value="5">5th Floor</SelectItem>
-                            <SelectItem value="6">6th Floor</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Zone</label>
-                        <Input value={leaseForm.zone} onChange={(e) => setLeaseForm({...leaseForm, zone: e.target.value})} placeholder="e.g., A" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Area (sq.ft) *</label>
-                        <Input type="number" value={leaseForm.areaSqft} onChange={(e) => setLeaseForm({...leaseForm, areaSqft: e.target.value})} placeholder="1000" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Lease Type</label>
-                        <Select value={leaseForm.leaseType} onValueChange={(v) => setLeaseForm({...leaseForm, leaseType: v})}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="fixed_rent">Fixed Rent</SelectItem>
-                            <SelectItem value="revenue_share">Revenue Share</SelectItem>
-                            <SelectItem value="hybrid">Hybrid</SelectItem>
-                            <SelectItem value="minimum_guarantee">Minimum Guarantee</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  {/* Financial Terms Tab */}
-                  <TabsContent value="financial" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Base Rent (₹/month)</label>
-                        <Input type="number" value={leaseForm.baseRent} onChange={(e) => setLeaseForm({...leaseForm, baseRent: e.target.value})} placeholder="50000" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Revenue Share (%)</label>
-                        <Input type="number" value={leaseForm.revenueSharePercentage} onChange={(e) => setLeaseForm({...leaseForm, revenueSharePercentage: e.target.value})} placeholder="10" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">CAM Charges (₹/month)</label>
-                        <Input type="number" value={leaseForm.camCharges} onChange={(e) => setLeaseForm({...leaseForm, camCharges: e.target.value})} placeholder="5000" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Security Deposit (₹)</label>
-                        <Input type="number" value={leaseForm.securityDeposit} onChange={(e) => setLeaseForm({...leaseForm, securityDeposit: e.target.value})} placeholder="150000" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Escalation Rate (%/year)</label>
-                        <Input type="number" value={leaseForm.escalationRate} onChange={(e) => setLeaseForm({...leaseForm, escalationRate: e.target.value})} placeholder="10" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Escalation Frequency (months)</label>
-                        <Select value={leaseForm.escalationFrequency} onValueChange={(v) => setLeaseForm({...leaseForm, escalationFrequency: v})}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="12">Annually (12 months)</SelectItem>
-                            <SelectItem value="24">Bi-annually (24 months)</SelectItem>
-                            <SelectItem value="36">Every 3 years (36 months)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  {/* Lease Terms Tab */}
-                  <TabsContent value="terms" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Start Date *</label>
-                        <Input type="date" value={leaseForm.startDate} onChange={(e) => setLeaseForm({...leaseForm, startDate: e.target.value})} />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">End Date *</label>
-                        <Input type="date" value={leaseForm.endDate} onChange={(e) => setLeaseForm({...leaseForm, endDate: e.target.value})} />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Lock-in Period (months)</label>
-                        <Input type="number" value={leaseForm.lockInPeriod} onChange={(e) => setLeaseForm({...leaseForm, lockInPeriod: e.target.value})} placeholder="12" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Termination Notice (days)</label>
-                        <Input type="number" value={leaseForm.terminationNoticeDays} onChange={(e) => setLeaseForm({...leaseForm, terminationNoticeDays: e.target.value})} placeholder="90" />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Fit-out Period (days)</label>
-                        <Input type="number" value={leaseForm.fitOutPeriod} onChange={(e) => setLeaseForm({...leaseForm, fitOutPeriod: e.target.value})} placeholder="30" />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Rent-Free Period (days)</label>
-                        <Input type="number" value={leaseForm.rentFreePeriod} onChange={(e) => setLeaseForm({...leaseForm, rentFreePeriod: e.target.value})} placeholder="0" />
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  {/* POS Integration Tab — Only for revenue_share/hybrid leases */}
-                  {isRevShareLease && (
-                    <TabsContent value="pos" className="space-y-4 mt-4">
-                      <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3 mb-2">
-                        <div className="flex items-center gap-2 text-sm text-blue-700">
-                          <Zap className="h-4 w-4" />
-                          <span className="font-medium">Connect POS to auto-calculate revenue share from actual sales data</span>
-                        </div>
-                        <p className="text-xs text-blue-600 mt-1 ml-6">
-                          Once connected, daily sales data is pulled automatically and revenue share invoices are generated from real POS transactions.
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">POS Provider</label>
-                        <Select value={leaseForm.posProvider} onValueChange={(v) => { setLeaseForm({...leaseForm, posProvider: v}); setPosTestStatus("idle"); }}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select POS system" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Indian Providers</div>
-                            <SelectItem value="pine_labs">🌲 Pine Labs</SelectItem>
-                            <SelectItem value="razorpay_pos">⚡ Razorpay POS</SelectItem>
-                            <SelectItem value="petpooja">🍽️ Petpooja</SelectItem>
-                            <SelectItem value="posist">🏪 POSist</SelectItem>
-                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground mt-1">Global Providers</div>
-                            <SelectItem value="shopify">🛍️ Shopify POS</SelectItem>
-                            <SelectItem value="square">🟦 Square</SelectItem>
-                            <SelectItem value="lightspeed">💡 Lightspeed</SelectItem>
-                            <SelectItem value="vend">🏷️ Vend</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Store ID / Location ID</label>
-                          <Input
-                            value={leaseForm.posStoreId}
-                            onChange={(e) => { setLeaseForm({...leaseForm, posStoreId: e.target.value}); setPosTestStatus("idle"); }}
-                            placeholder="e.g., store-123 or LOC-456"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">API Key / Access Token</label>
-                          <Input
-                            type="password"
-                            value={leaseForm.posApiKey}
-                            onChange={(e) => { setLeaseForm({...leaseForm, posApiKey: e.target.value}); setPosTestStatus("idle"); }}
-                            placeholder="Enter API key"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Sync Frequency</label>
-                        <Select value={leaseForm.posSyncFrequency} onValueChange={(v) => setLeaseForm({...leaseForm, posSyncFrequency: v})}>
-                          <SelectTrigger className="w-[200px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="real_time">Real-time</SelectItem>
-                            <SelectItem value="hourly">Hourly</SelectItem>
-                            <SelectItem value="daily">Daily</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {/* Test Connection */}
-                      <div className="flex items-center gap-3 pt-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleTestPOSConnection}
-                          disabled={posTestStatus === "testing" || !leaseForm.posProvider || !leaseForm.posStoreId || !leaseForm.posApiKey}
-                          className="gap-2"
-                        >
-                          {posTestStatus === "testing" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : posTestStatus === "success" ? (
-                            <CheckCircle className="h-4 w-4 text-emerald-500" />
-                          ) : posTestStatus === "error" ? (
-                            <WifiOff className="h-4 w-4 text-red-500" />
-                          ) : (
-                            <Wifi className="h-4 w-4" />
-                          )}
-                          {posTestStatus === "testing" ? "Testing..." : "Test Connection"}
-                        </Button>
-                        {posTestMessage && (
-                          <span className={cn("text-sm", posTestStatus === "success" ? "text-emerald-600" : "text-red-600")}>
-                            {posTestMessage}
-                          </span>
-                        )}
-                      </div>
-                    </TabsContent>
-                  )}
-                </Tabs>
-
-                <DialogFooter className="mt-6">
-                  <Button type="button" variant="outline" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-                  <Button type="submit" disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600">
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Create Lease
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button className="gap-1 bg-emerald-500 hover:bg-emerald-600" onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="h-4 w-4" /> Create Lease
+          </Button>
+          <CreateLeaseDialog
+            open={createDialogOpen}
+            onOpenChange={setCreateDialogOpen}
+            properties={properties}
+            selectedPropertyId={selectedProperty?.id}
+            onSuccess={fetchLeases}
+          />
         </div>
       </div>
 
@@ -773,6 +303,7 @@ export default function LeasesPage() {
               </Button>
             </div>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -787,7 +318,7 @@ export default function LeasesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredLeases.map((lease) => {
+                {paginatedLeases.map((lease) => {
                   const daysToExpiry = differenceInDays(new Date(lease.endDate), new Date())
                   const isExpiringSoon = daysToExpiry > 0 && daysToExpiry <= 90
                   
@@ -844,8 +375,13 @@ export default function LeasesPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild>
+                              <Link href={`/leases/${lease.id}`}>
+                                <Eye className="h-4 w-4 mr-2" /> Full Lease Details
+                              </Link>
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => { setSelectedLease(lease); setViewDialogOpen(true); }}>
-                              <Eye className="h-4 w-4 mr-2" /> View Details
+                              <Eye className="h-4 w-4 mr-2" /> Quick View
                             </DropdownMenuItem>
                             <DropdownMenuItem asChild>
                               <Link href={`/tenants/${lease.tenant?.id}`}>
@@ -866,6 +402,45 @@ export default function LeasesPage() {
                 })}
               </TableBody>
             </Table>
+            {filteredLeases.length > 0 && (
+              <div className="flex items-center justify-between border-t pt-4 mt-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span>
+                    Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredLeases.length)} of {filteredLeases.length}
+                  </span>
+                  <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setCurrentPage(1) }}>
+                    <SelectTrigger className="h-8 w-[70px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span>per page</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage <= 1} onClick={() => setCurrentPage((p) => p - 1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="px-3 text-sm font-medium">
+                    {currentPage} / {totalPages || 1}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage((p) => p + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8" disabled={currentPage >= totalPages} onClick={() => setCurrentPage(totalPages)}>
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>

@@ -18,6 +18,10 @@ import type { POSProvider, POSSalesRecord, POSProviderConfig } from "../types"
 import { createHmac, timingSafeEqual } from "crypto"
 import { serviceDb } from "@/lib/db"
 import { sql } from "drizzle-orm"
+import { withRetry, isRetryableHttpError } from "@/lib/utils/retry"
+import { withCircuitBreaker } from "../circuit-breaker"
+
+const TIMEOUT_MS = 8_000
 
 // ── Webhook payload types ─────────────────────────────────────────────────────
 
@@ -68,18 +72,49 @@ export class PetpoojaProvider implements POSProvider {
   async testConnection(): Promise<{ ok: boolean; error?: string }> {
     // Petpooja is webhook-only — validate credentials via their OAuth endpoint
     try {
+      await withCircuitBreaker("petpooja", () => 
+        withRetry(
+          () => this.doTestRequest(),
+          { attempts: 3, initialDelay: 1_000, isRetryable: isRetryableHttpError },
+        )
+      )
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  private async doTestRequest(): Promise<void> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+    try {
       const res = await fetch("https://api.petpooja.com/v2/restaurants/validate", {
         method: "POST",
         headers: {
           "Content-Type":  "application/json",
           "Authorization": `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({ restaurant_id: this.restaurantId }),
+        body:   JSON.stringify({ restaurant_id: this.restaurantId }),
+        signal: controller.signal,
       })
+      clearTimeout(timer)
+
+      if (!res.ok) {
+        const body = await res.text()
+        throw new Error(`Petpooja API ${res.status}: ${body.slice(0, 200)}`)
+      }
+
       const data = await res.json() as { status: string }
-      return { ok: data.status === "success" }
+      if (data.status !== "success") {
+        throw new Error(`Petpooja API ${res.status}: validation returned status=${data.status}`)
+      }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      clearTimeout(timer)
+      if ((err as Error).name === "AbortError") {
+        throw new Error(`Petpooja API timeout after ${TIMEOUT_MS}ms`)
+      }
+      throw err
     }
   }
 
